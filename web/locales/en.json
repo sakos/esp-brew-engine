@@ -60,9 +60,15 @@
     "stepInterval_tooltip": "The time between steps less means more substeps will be added",
     "mash": "Mash",
     "boil": "Boil",
-    "boost": "Boost",
+    "boost": "Heater control",
     "boost_until": "Boost Until (%)",
     "boost_until_tooltip": "Ignore PID until this % is reached, then wait for temp drop and restart PID.\nBoost must also be set at schedule step\nSet to 0 to disable)",
+    "heater_limit": "Heater limit (%)",
+    "heater_limit_tooltip": "Limits PID controlled heater power at this %. Boost overrides this limit",
+    "heater_cycles": "Heater cycles",
+    "heater_cycles_tooltip": "Number of heater cycles during a PID cycle. \nThe more, shorter heater cycles the less fluctuaion of heater element temperature, however the more frequent relay switches",
+    "relay_guard": "Relay guard time (%)",
+    "relay_guard_tooltip": "Minimum On/Off state time for relays to avoid useless short glitches. (% of heater cycle time)",
     "boost_rest": "Boost Rest (sec)"
   },
   "heaterSettings": {

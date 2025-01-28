@@ -143,6 +143,10 @@ private:
     float tempMargin = 0.5;    // we don't want to nitpick about 0.5°C, water heating is not that percise
 
     uint8_t boostModeUntil = 85;
+	uint8_t heaterLimit = 100;
+	uint8_t heaterCycles = 1;
+	uint8_t relayGuard = 5;
+
 
     // execution
     bool run = false;

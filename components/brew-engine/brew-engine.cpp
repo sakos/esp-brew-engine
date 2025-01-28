@@ -213,6 +213,9 @@ void BrewEngine::readSettings()
 	this->stepInterval = this->settingsManager->Read("stepInterval", (uint16_t)CONFIG_PID_LOOPTIME); // we use same as pidloop time
 
 	this->boostModeUntil = this->settingsManager->Read("boostModeUntil", (uint8_t)this->boostModeUntil);
+	this->heaterLimit = this->settingsManager->Read("heaterLimit", (uint8_t)this->heaterLimit);
+	this->heaterCycles = this->settingsManager->Read("heaterCycles", (uint8_t)this->heaterCycles);
+	this->relayGuard = this->settingsManager->Read("relayGuard", (uint8_t)this->relayGuard);
 }
 
 void BrewEngine::setMashSchedule(const json &jSchedule)
@@ -308,6 +311,9 @@ void BrewEngine::savePIDSettings()
 	this->settingsManager->Write("stepInterval", this->stepInterval);
 
 	this->settingsManager->Write("boostModeUntil", this->boostModeUntil);
+	this->settingsManager->Write("heaterLimit", this->heaterLimit);
+	this->settingsManager->Write("heaterCycles", this->heaterCycles);
+	this->settingsManager->Write("relayGuard", this->relayGuard);
 
 	ESP_LOGI(TAG, "Saving PID Settings Done");
 }
@@ -1447,6 +1453,11 @@ void BrewEngine::pidLoop(void *arg)
 			outputPercent = 100;
 			instance->pidOutput = 100;
 		}
+		else if (instance->heaterLimit < outputPercent)
+		{
+			outputPercent = instance->heaterLimit;
+			instance->pidOutput = instance->heaterLimit;
+		}
 		else if (instance->boostStatus == Rest)
 		{
 			outputPercent = 0;
@@ -1479,6 +1490,25 @@ void BrewEngine::pidLoop(void *arg)
 			if (heater->watt > outputWatt)
 			{
 				heater->burnTime = (int)(((double)outputWatt / (double)heater->watt) * 100);
+				
+				if (heater->burnTime <= instance->relayGuard/2)
+				{
+					heater->burnTime=0;
+				}
+				else if (heater->burnTime <= instance->relayGuard)
+				{
+					heater->burnTime=instance->relayGuard;
+				}
+
+				if (heater->burnTime >= 100 - instance->relayGuard/2)
+				{
+					heater->burnTime=100;
+				}
+				else if (heater->burnTime >= 100 - instance->relayGuard)
+				{
+					heater->burnTime=100 - instance->relayGuard;
+				}
+				
 				ESP_LOGD(TAG, "Pid Calc Heater %s: OutputWatt: %d Burn: %d", heater->name.c_str(), outputWatt, heater->burnTime);
 				break;
 			}
@@ -1491,8 +1521,11 @@ void BrewEngine::pidLoop(void *arg)
 			}
 		}
 
+		// Shorter heater cycles for even temperature and prevent hot spots
+		int heaterLoopTime = instance->pidLoopTime / instance->heaterCycles;
+		
 		// we keep going for the desired pidlooptime and set the burn by percent
-		for (int i = 0; i < instance->pidLoopTime; i++)
+		for (int i = 0; i < instance->pidLoopTime / instance->heaterCycles; i++)
 		{
 			if (!instance->run || !instance->controlRun)
 			{
@@ -1510,10 +1543,10 @@ void BrewEngine::pidLoop(void *arg)
 
 				if (heater->burnTime > 0)
 				{
-					burnUntil = ((double)heater->burnTime / 100) * (double)instance->pidLoopTime; // convert % back to seconds
+					burnUntil = ((double)heater->burnTime / 100) * (double)instance->pidLoopTime / (double)instance->heaterCycles; // convert % back to seconds (per heater cycle)
 				}
 
-				if (burnUntil > i) // on
+				if (burnUntil > i % heaterLoopTime) // on 
 				{
 					if (heater->burn != true) // only when not current, we don't want to spam the logs
 					{
@@ -2037,6 +2070,9 @@ string BrewEngine::processCommand(const string &payLoad)
 			{"pidLoopTime", this->pidLoopTime},
 			{"stepInterval", this->stepInterval},
 			{"boostModeUntil", this->boostModeUntil},
+			{"heaterLimit", this->heaterLimit},
+			{"heaterCycles", this->heaterCycles},
+			{"relayGuard", this->relayGuard},
 		};
 	}
 	else if (command == "SavePIDSettings")
@@ -2050,6 +2086,9 @@ string BrewEngine::processCommand(const string &payLoad)
 		this->pidLoopTime = data["pidLoopTime"].get<uint16_t>();
 		this->stepInterval = data["stepInterval"].get<uint16_t>();
 		this->boostModeUntil = data["boostModeUntil"].get<uint8_t>();
+		this->heaterLimit = data["heaterLimit"].get<uint8_t>();
+		this->heaterCycles = data["heaterCycles"].get<uint8_t>();
+		this->relayGuard = data["relayGuard"].get<uint8_t>();
 		this->savePIDSettings();
 	}
 	else if (command == "GetTempSettings")
