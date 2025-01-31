@@ -1333,7 +1333,11 @@ void BrewEngine::readLoop(void *arg)
 			}
 		}
 
-		float avg = sum / nrOfSensors;
+		float avg = 0;
+		if (nrOfSensors > 0) 
+		{
+			avg = sum / nrOfSensors;
+		}
 
 		ESP_LOGD(TAG, "Avg Temperature: %.2f°", avg);
 
