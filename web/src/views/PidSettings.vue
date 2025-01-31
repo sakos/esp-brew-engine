@@ -17,6 +17,9 @@ const pidSettings = ref<IPidSettings>({
   pidLoopTime: 60,
   stepInterval: 60,
   boostModeUntil: 85,
+  heaterLimit: 100,
+  heaterCycles: 1,
+  relayGuard: 5,
 });
 
 const getData = async () => {
@@ -128,6 +131,48 @@ const save = async () => {
           <v-text-field type="number" v-model.number="pidSettings.boostModeUntil" :label="$t('pidSettings.boost_until')" :min="0" :max="100">
             <template v-slot:append>
               <v-tooltip :text="$t('pidSettings.boost_until_tooltip')">
+                <template v-slot:activator="{ props }">
+                  <v-icon size="small" v-bind="props">{{ mdiHelp }}</v-icon>
+                </template>
+              </v-tooltip>
+            </template>
+            </v-text-field>
+        </v-col>
+      </v-row>
+
+      <v-row class="mt-4 mb-2">
+        <v-col cols="12" md="3">
+          <v-text-field type="number" v-model.number="pidSettings.heaterLimit" :label="$t('pidSettings.heater_limit')" :min="25" :max="100">
+            <template v-slot:append>
+              <v-tooltip :text="$t('pidSettings.heater_limit_tooltip')">
+                <template v-slot:activator="{ props }">
+                  <v-icon size="small" v-bind="props">{{ mdiHelp }}</v-icon>
+                </template>
+              </v-tooltip>
+            </template>
+            </v-text-field>
+        </v-col>
+      </v-row>
+
+      <v-row class="mt-4 mb-2">
+        <v-col cols="12" md="3">
+          <v-text-field type="number" v-model.number="pidSettings.heaterCycles" :label="$t('pidSettings.heater_cycles')" :min="1" :max="10">
+            <template v-slot:append>
+              <v-tooltip :text="$t('pidSettings.heater_cycles_tooltip')">
+                <template v-slot:activator="{ props }">
+                  <v-icon size="small" v-bind="props">{{ mdiHelp }}</v-icon>
+                </template>
+              </v-tooltip>
+            </template>
+            </v-text-field>
+        </v-col>
+      </v-row>
+
+      <v-row class="mt-4 mb-2">
+        <v-col cols="12" md="3">
+          <v-text-field type="number" v-model.number="pidSettings.relayGuard" :label="$t('pidSettings.relay_guard')" :min="0" :max="20">
+            <template v-slot:append>
+              <v-tooltip :text="$t('pidSettings.relay_guard_tooltip')">
                 <template v-slot:activator="{ props }">
                   <v-icon size="small" v-bind="props">{{ mdiHelp }}</v-icon>
                 </template>
