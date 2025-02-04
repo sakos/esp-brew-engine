@@ -102,6 +102,12 @@ void BrewEngine::initHeaters()
 		gpio_set_direction(heater->pinNr, GPIO_MODE_OUTPUT);
 		gpio_set_level(heater->pinNr, this->gpioLow);
 	}
+	
+	// Debug settings for LED output to test improced heater control
+	gpio_reset_pin(GPIO_NUM_2);
+	gpio_set_direction(GPIO_NUM_2, GPIO_MODE_OUTPUT);
+	gpio_set_level(GPIO_NUM_2, 0);
+
 }
 
 void BrewEngine::readSystemSettings()
@@ -1622,6 +1628,7 @@ void BrewEngine::outputLoop(void *arg)
 	for (auto const &heater : instance->heaters)
 	{
 		gpio_set_level(heater->pinNr, instance->gpioLow);
+		gpio_set_level(GPIO_NUM_2, 0); //Test led
 	}
 
 	while (instance->run && instance->controlRun)
@@ -1634,11 +1641,14 @@ void BrewEngine::outputLoop(void *arg)
 			{
 				ESP_LOGD(TAG, "Output %s: On", heater->name.c_str());
 				gpio_set_level(heater->pinNr, instance->gpioHigh);
+				gpio_set_level(GPIO_NUM_2, 1); //Test led
+
 			}
 			else
 			{
 				ESP_LOGD(TAG, "Output %s: Off", heater->name.c_str());
 				gpio_set_level(heater->pinNr, instance->gpioLow);
+				gpio_set_level(GPIO_NUM_2, 0); //Test led
 			}
 		}
 	}
@@ -1647,6 +1657,8 @@ void BrewEngine::outputLoop(void *arg)
 	for (auto const &heater : instance->heaters)
 	{
 		gpio_set_level(heater->pinNr, instance->gpioLow);
+		gpio_set_level(GPIO_NUM_2, 0); //Test led
+
 	}
 
 	vTaskDelete(NULL);
