@@ -9,6 +9,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
+#include "driver/ledc.h"
 
 #include "esp_log.h"
 #include <esp_http_server.h>
@@ -24,6 +25,7 @@
 #include <ranges>
 #include <map>
 #include <vector>
+
 
 #include "onewire_bus.h"
 #include "ds18b20.h"
@@ -75,6 +77,7 @@ private:
     static void reboot(void *arg);
     static void factoryReset(void *arg);
     static void buzzer(void *arg);
+    static void speaker(void *arg);
 
     void readTempSensorSettings();
     void detectOnewireTemperatureSensors();
@@ -177,8 +180,12 @@ private:
     gpio_num_t oneWire_PIN;
     gpio_num_t stir_PIN;
     gpio_num_t buzzer_PIN;
+    gpio_num_t speaker1_PIN;
+    gpio_num_t speaker2_PIN;
 
     uint8_t buzzerTime; // in seconds
+    uint16_t soundTime; // in milliseconds
+    uint16_t soundBurst; // in milliseconds
 
     std::deque<Notification *> notifications;
 

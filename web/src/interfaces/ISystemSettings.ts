@@ -8,4 +8,6 @@ export interface ISystemSettings {
   invertOutputs: boolean;
   mqttUri: string;
   temperatureScale: TemperatureScale;
+  speaker1Pin: number;
+  speaker2Pin: number;
 }

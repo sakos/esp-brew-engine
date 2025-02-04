@@ -59,6 +59,21 @@ void BrewEngine::Init()
 		gpio_set_level(this->buzzer_PIN, this->gpioLow);
 	}
 
+	if (!this->speaker1_PIN || !this->speaker2_PIN)
+	{
+		ESP_LOGW(TAG, "Speaker (both) is not configured!");
+	}
+	else
+	{
+		gpio_reset_pin(this->speaker1_PIN);
+		gpio_set_direction(this->speaker1_PIN, GPIO_MODE_OUTPUT);
+		gpio_set_level(this->speaker1_PIN, 0);
+		gpio_reset_pin(this->speaker2_PIN);
+		gpio_set_direction(this->speaker2_PIN, GPIO_MODE_OUTPUT);
+		gpio_set_level(this->speaker2_PIN, 0);
+	}
+
+
 	// read other settings like maishschedules and pid
 	this->readSettings();
 
@@ -98,6 +113,8 @@ void BrewEngine::readSystemSettings()
 	this->stir_PIN = (gpio_num_t)this->settingsManager->Read("stirPin", (uint16_t)CONFIG_STIR);
 	this->buzzer_PIN = (gpio_num_t)this->settingsManager->Read("buzzerPin", (uint16_t)CONFIG_BUZZER);
 	this->buzzerTime = this->settingsManager->Read("buzzerTime", (uint8_t)2);
+	this->speaker1_PIN = (gpio_num_t)this->settingsManager->Read("speaker1Pin", (uint16_t)CONFIG_SPEAKER1);
+	this->speaker2_PIN = (gpio_num_t)this->settingsManager->Read("speaker2Pin", (uint16_t)CONFIG_SPEAKER2);
 
 	bool configInvertOutputs = false;
 // is there a cleaner way to do this?, config to bool doesn't seem to work properly
@@ -160,6 +177,17 @@ void BrewEngine::saveSystemSettingsJson(const json &config)
 		this->settingsManager->Write("tempScale", scale); // key is limited to x chars so we shorten it
 		this->temperatureScale = (TemperatureScale)config["temperatureScale"];
 	}
+	if (!config["speaker1Pin"].is_null() && config["speaker1Pin"].is_number())
+	{
+		this->settingsManager->Write("speaker1Pin", (uint16_t)config["speaker1Pin"]);
+		this->speaker1_PIN = (gpio_num_t)config["speaker1Pin"];
+	}
+	if (!config["speaker2Pin"].is_null() && config["speaker2Pin"].is_number())
+	{
+		this->settingsManager->Write("speaker2Pin", (uint16_t)config["speaker2Pin"]);
+		this->speaker1_PIN = (gpio_num_t)config["speaker2Pin"];
+	}
+
 
 	ESP_LOGI(TAG, "Saving System Settings Done");
 }
@@ -486,6 +514,8 @@ void BrewEngine::addDefaultHeaters()
 
 void BrewEngine::readHeaterSettings()
 {
+	ESP_LOGI(TAG, "Reading Heater Settings");
+
 	vector<uint8_t> empty = json::to_msgpack(json::array({}));
 	vector<uint8_t> serialized = this->settingsManager->Read("heaters", empty);
 
@@ -1769,6 +1799,9 @@ void BrewEngine::controlLoop(void *arg)
 
 						string buzzerName = "buzzer" + first->name;
 						xTaskCreate(&instance->buzzer, buzzerName.c_str(), 1024, instance, 10, NULL);
+						instance->soundTime = instance->buzzerTime * 1000;
+						instance->soundBurst = 300 ; // in milliseconds
+						xTaskCreate(&instance->speaker, buzzerName.c_str(), 4096, instance, 10, NULL);
 
 						first->done = true;
 					}
@@ -1829,6 +1862,70 @@ void BrewEngine::buzzer(void *arg)
 		gpio_set_level(instance->buzzer_PIN, instance->gpioLow);
 	}
 
+	vTaskDelete(NULL);
+}
+
+void BrewEngine::speaker(void *arg)
+{
+	BrewEngine *instance = (BrewEngine *)arg; 
+
+	ESP_LOGI(TAG, "Speaker function started"); 
+
+
+	if ((instance->speaker1_PIN > 0) && (instance->speaker2_PIN > 0))
+	{
+		ledc_timer_config_t ledc_timer = {};  // Zero-initialize the structure
+		ledc_timer.speed_mode = LEDC_LOW_SPEED_MODE;
+		ledc_timer.timer_num = LEDC_TIMER_0;
+		ledc_timer.duty_resolution = LEDC_TIMER_8_BIT;
+		ledc_timer.freq_hz = 1800;
+		ledc_timer.clk_cfg = LEDC_AUTO_CLK;	
+		ledc_timer_config(&ledc_timer);
+
+		
+		ledc_channel_config_t ledc_channel1; 	 // Define 1st PWM channel
+		ledc_channel1.speed_mode     = LEDC_LOW_SPEED_MODE;
+		ledc_channel1.channel        = LEDC_CHANNEL_0;
+		ledc_channel1.timer_sel      = LEDC_TIMER_0;
+		ledc_channel1.intr_type      = LEDC_INTR_DISABLE;
+		ledc_channel1.gpio_num       = instance->speaker1_PIN;  // First GPIO pin
+		ledc_channel1.duty           = 128;			//Relative to timer resolution
+		ledc_channel1.hpoint         = 0;
+		ledc_channel1.flags.output_invert = 0;
+
+
+		ledc_channel_config_t ledc_channel2 = ledc_channel1;// Define 2nd PWM channel
+		ledc_channel1.channel        = LEDC_CHANNEL_1;
+		ledc_channel1.gpio_num       = instance->speaker2_PIN;  // First GPIO pin
+		ledc_channel1.hpoint         = 128;			//Shift half period instead of inverting.
+
+		ledc_channel_config(&ledc_channel1);
+		ledc_channel_config(&ledc_channel2);
+		
+		
+		for (int i = 0; i < instance->soundTime; i += 2*instance->soundBurst)
+		{
+		
+			//generate sound for burst time
+			// Sound volume is proportional to duty. Can be utilized later.
+			ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 128);
+			ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, 128);
+
+			ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+			ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1);
+
+			vTaskDelay(instance->soundBurst  / portTICK_PERIOD_MS);
+			
+			//stop sound for same
+
+			ledc_stop(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 0);
+			ledc_stop(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, 0);
+
+			
+			vTaskDelay(instance->soundBurst  / portTICK_PERIOD_MS);
+			
+		}
+	}
 	vTaskDelete(NULL);
 }
 
@@ -2176,6 +2273,8 @@ string BrewEngine::processCommand(const string &payLoad)
 			{"invertOutputs", this->invertOutputs},
 			{"mqttUri", this->mqttUri},
 			{"temperatureScale", this->temperatureScale},
+			{"speaker1Pin", this->speaker1_PIN},
+			{"speaker2Pin", this->speaker2_PIN},
 		};
 	}
 	else if (command == "SaveSystemSettings")

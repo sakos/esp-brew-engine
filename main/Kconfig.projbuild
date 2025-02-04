@@ -57,7 +57,7 @@ menu "BrewEngine Config"
     
     config STIR
         int "STIR Pin"
-        default 25
+        default 27
         help
             STIR Pin
             Set to 0 to disable!
@@ -68,7 +68,7 @@ menu "BrewEngine Config"
         help
             Buzzer Pin
 
-    config InvertOutputs
+config InvertOutputs
         bool "Invert Outputs"
         default n
         help
@@ -89,5 +89,17 @@ menu "BrewEngine Config"
             PID LOOPTIME
             Default time between pid calc and ajust, since water heating is a slow proccess this works best at 60sec.
 
+			
+     config SPEAKER1
+        int "Speaker1 Pin"
+        default 25
+        help
+            Speaker 1 Pin
+
+     config SPEAKER2
+        int "Speaker2 Pin"
+        default 26
+        help
+            Speaker 2 Pin
 
 endmenu
