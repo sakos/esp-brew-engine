@@ -8,4 +8,7 @@ export interface IPidSettings {
   pidLoopTime: number;
   stepInterval: number;
   boostModeUntil: number;
+  heaterLimit: number;
+  heaterCycles: number;
+  relayGuard: number;
 }
