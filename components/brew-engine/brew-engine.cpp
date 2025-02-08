@@ -998,7 +998,7 @@ void BrewEngine::loadSchedule()
 			else
 			{
 				auto secondsInStep = chrono::duration_cast<chrono::seconds>(stepEndTime - prevTime).count();
-				subStepsInStep = (secondsInStep / this->stepInterval) - 1;
+				subStepsInStep = (secondsInStep / this->stepInterval);
 
 				// we need atleast one step
 				if (subStepsInStep < 1)
@@ -1163,14 +1163,18 @@ void BrewEngine::recalculateScheduleAfterOverTime()
 	// also increase notifications
 	for (auto &notification : this->notifications)
 	{
-		auto newTime = notification->timePoint + seconds(extraSeconds);
+		if (!notification->done)
+		{
+			auto newTime = notification->timePoint + seconds(extraSeconds);
+			
 
-		string iso_string = this->to_iso_8601(notification->timePoint);
-		string iso_string2 = this->to_iso_8601(newTime);
+			string iso_string = this->to_iso_8601(notification->timePoint);
+			string iso_string2 = this->to_iso_8601(newTime);
 
-		ESP_LOGI(TAG, "Notification Time Changend From: %s, To:%s ", iso_string.c_str(), iso_string2.c_str());
+			ESP_LOGI(TAG, "Notification Time Changend From: %s, To:%s ", iso_string.c_str(), iso_string2.c_str());
 
-		notification->timePoint = newTime;
+			notification->timePoint = newTime;
+		}
 	}
 
 	// increate version so client can follow changes
