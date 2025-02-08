@@ -1925,8 +1925,8 @@ void BrewEngine::speaker(void *arg)
 		
 			//generate sound for burst time
 			// Sound volume is proportional to duty. Can be utilized later.
-			ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 128);
-			ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, 128);
+			ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 64);
+			ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, 64);
 
 			ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
 			ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1);
