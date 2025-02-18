@@ -33,6 +33,8 @@ const manualOverrideTemperature = ref<number>();
 const manualOverrideOutput = ref<number | null>(null);
 const inOverTime = ref<boolean>(false);
 const boostStatus = ref<BoostStatus>(BoostStatus.Off);
+const powerUsage = ref<number>();
+
 
 const intervalId = ref<any>();
 
@@ -401,6 +403,8 @@ const getData = async () => {
   lastGoodDataDate.value = apiResult.data.lastLogDateTime;
   inOverTime.value = apiResult.data.inOverTime;
   boostStatus.value = apiResult.data.boostStatus;
+  powerUsage.value = apiResult.data.powerUsage;
+  const serverRunningVersion = apiResult.data.powerUsage;
 
   if (status.value === "Running" && lastRunningVersion.value !== serverRunningVersion) {
     // the schedule has changed, we need to update

@@ -150,6 +150,8 @@ private:
 	uint8_t heaterLimit = 100;
 	uint8_t heaterCycles = 1;
 	uint8_t relayGuard = 5;
+	
+    float powerUsage = 0;	// Calculates the consumed electric power
 
 
     // execution

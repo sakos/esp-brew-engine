@@ -88,6 +88,9 @@ void BrewEngine::Init()
 	this->initMqtt();
 
 	this->run = true;
+	
+	this->powerUsage = 0;
+
 
 	xTaskCreate(&this->readLoop, "readloop_task", 4096, this, 5, NULL);
 	
@@ -1529,6 +1532,7 @@ void BrewEngine::pidLoop(void *arg)
 						heater->burn = true;
 						ESP_LOGD(TAG, "Heater %s: On", heater->name.c_str());
 					}
+					instance->powerUsage += heater->watt;
 				}
 				else // off
 				{
@@ -1550,6 +1554,9 @@ void BrewEngine::pidLoop(void *arg)
 
 			vTaskDelay(pdMS_TO_TICKS(1000));
 		}
+		// Calculate power consumption of this cycle
+		ESP_LOGI(TAG, "Power consumption: %f", (instance->powerUsage / 3600));
+
 	}
 
 	instance->pidOutput = 0;
@@ -2009,6 +2016,7 @@ string BrewEngine::processCommand(const string &payLoad)
 			{"runningVersion", this->runningVersion},
 			{"inOverTime", this->inOverTime},
 			{"boostStatus", this->boostStatus},
+			{"powerUsage", (int)(this->powerUsage / 3600)},
 		};
 
 		if (this->manualOverrideOutput.has_value())
