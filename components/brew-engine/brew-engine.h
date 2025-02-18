@@ -86,6 +86,7 @@ private:
     void initHeaters();
     void readSystemSettings();
     void readSettings();
+	void calcNotificationTime();
     void saveMashSchedules();
     void setMashSchedule(const json &jSchedule);
     void savePIDSettings();
@@ -93,7 +94,7 @@ private:
     void addDefaultMash();
     void start();
     void loadSchedule();
-    void recalculateScheduleAfterOverTime();
+    void recalculateScheduleAfterOverTime(const uint extraSeconds);
     void stop();
     void logRemote(const string &message);
     void addDefaultHeaters();
@@ -156,6 +157,7 @@ private:
     bool controlRun = false;   // true when a program is running
     bool boilRun = false;      // true when a boil schedule  is running
     bool skipTempLoop = false; // When we are changing temp settings we temporarily need to skip our temp loop
+    bool restRun = false;   // true when a program is completed but notifications are remaining
     BoostStatus boostStatus;   // Status of boost
 
     bool inOverTime = false; // when a step time isn't reached we go in overtime, we need this to know that we need recalcualtion
@@ -169,6 +171,10 @@ private:
     uint16_t currentExecutionStep = 0;
     uint16_t stepInterval = 60;  // calcualte a substep every x seconds
     uint16_t runningVersion = 0; // we increase our version after recalc, so client can keep uptodate with planning
+	
+	const uint8_t overTimeTrigger = 5; // Time in seconds before step ends to pretrigger overtime. 0 would prevent notification delay
+	const uint8_t overTimeStep = 5; // Time in seconds the time added at each overtime shift.
+	
 
     // IO
     uint8_t gpioHigh = 1;

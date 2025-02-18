@@ -121,17 +121,7 @@ const speakMessage = async (message: string) => {
 };
 
 const showNotificaton = async (notification: INotification, alert: boolean) => {
-  // Currently in overtime don't need to show, updated notifications will come after overtime
-  if (inOverTime.value) {
-    return;
-  }
 
-  // Overtime status comes to slow so we get incorrect messages when notifications are right on the step time, we skip them id temp not reached
-  if (targetTemperature.value != null && temperature.value != null) {
-    if (targetTemperature.value - temperature.value > 0.5) {
-      return;
-    }
-  }
 
   notificationsShown.value.push(notification.timePoint);
 
@@ -173,7 +163,7 @@ const chartAnnotations = computed(() => {
 
       currentNotifications = scheduleNotifications.map((notification) => {
         let notificationTime = startDateTime.value!;
-        notificationTime += notification.timeFromStart * 60;
+        notificationTime += notification.timeAbsolute * 60;
 
         const newNotification = { ...notification };
         newNotification.timePoint = notificationTime;
@@ -348,14 +338,16 @@ const setNotifications = (newNotifications: Array<INotification>) => {
     .filter((n) => notificationsShown.value.includes(n.timePoint) === false)
     .forEach((notification) => {
       const timeTill = notification.timePoint * 1000 - Date.now();
-      // We do want past notification due to overtime, but these are verry short in the past! max 10 seconds
-      if (timeTill > -10000) {
+      // We do want to loose notification due to overtime, but these are very short in the past! max 10 seconds 
+	  // Overtime is gradual, we do not schedule notification popups during overtime. Instead an update will happen after overtime has ended
+      if ((timeTill > -10000) && !inOverTime.value) {
         const timeoutId = window.setTimeout(() => {
           showNotificaton(notification, true);
         }, timeTill);
         timeoutIds.push(timeoutId);
       }
     });
+
 
   notificationTimeouts.value = timeoutIds;
 
@@ -376,6 +368,7 @@ const getRunningSchedule = async () => {
 
   executionSteps.value = apiResult.data.steps;
   setNotifications(apiResult.data.notifications as Array<INotification>);
+ 
 
   lastRunningVersion.value = apiResult.data.version;
 };
@@ -408,16 +401,14 @@ const getData = async () => {
   lastGoodDataDate.value = apiResult.data.lastLogDateTime;
   inOverTime.value = apiResult.data.inOverTime;
   boostStatus.value = apiResult.data.boostStatus;
-  const serverRunningVersion = apiResult.data.runningVersion;
-
-  // notifications move with overtime and will be re-added when it is done
-  if (inOverTime.value) {
-    clearAllNotificationTimeouts();
-  }
 
   if (status.value === "Running" && lastRunningVersion.value !== serverRunningVersion) {
     // the schedule has changed, we need to update
     getRunningSchedule();
+  }
+
+  if (inOverTime.value) {
+    clearAllNotificationTimeouts();
   }
 
   const tempData = [...rawData.value, ...apiResult.data.tempLog];
@@ -756,7 +747,11 @@ const labelTargetTemp = computed(() => {
             readonly />
         </v-col>
         <v-col cols="12" md="3">
-          
+          <v-text-field
+            v-model.number="powerUsage"
+            type="number"
+			:label="$t('power.consumption')"
+			readonly />          
         </v-col>
 
       </v-row>

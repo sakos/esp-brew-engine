@@ -76,6 +76,8 @@ void BrewEngine::Init()
 
 	// read other settings like maishschedules and pid
 	this->readSettings();
+	
+	this->calcNotificationTime();
 
 	this->readTempSensorSettings();
 
@@ -88,6 +90,7 @@ void BrewEngine::Init()
 	this->run = true;
 
 	xTaskCreate(&this->readLoop, "readloop_task", 4096, this, 5, NULL);
+	
 
 	this->server = this->startWebserver();
 }
@@ -198,6 +201,34 @@ void BrewEngine::saveSystemSettingsJson(const json &config)
 	ESP_LOGI(TAG, "Saving System Settings Done");
 }
 
+void BrewEngine::calcNotificationTime()
+{
+	ESP_LOGI(TAG, "Calculating notification absolute time");
+
+	for (auto const &[key, mashSchedule] : this->mashSchedules)
+	// Iterate through all mash schedules
+	{
+//		ESP_LOGI(TAG, "Schedule: %s ", mashSchedule->name.c_str());
+		for (const auto& notification : mashSchedule->notifications)
+		// Iterate through all notifications within this mash schedule
+		{
+			int sum = notification->timeFromStart;
+			for (const auto& step : mashSchedule->steps)
+			// Iterate through all mash steps within this mash schedule
+			{
+				if (step->index < notification->refStepIndex) 
+				// Increase notification absolute time with step and hold time of all previous steps
+				{
+					sum += step->stepTime;
+					sum += step->time;
+				}
+			}
+			notification->timeAbsolute = sum;
+		}
+    }
+}	
+
+
 void BrewEngine::readSettings()
 {
 	ESP_LOGI(TAG, "Reading Settings");
@@ -212,6 +243,8 @@ void BrewEngine::readSettings()
 		ESP_LOGI(TAG, "Adding Default Mash Schedules");
 		this->addDefaultMash();
 		this->saveMashSchedules();
+		this->calcNotificationTime();		// Update runtime 
+
 	}
 	else
 	{
@@ -393,6 +426,7 @@ void BrewEngine::addDefaultMash()
 	defaultMash_n1->message = "Please add Grains";
 	defaultMash_n1->timeFromStart = 5;
 	defaultMash_n1->buzzer = true;
+	defaultMash_n1->refStepIndex = 0;
 	defaultMash->notifications.push_back(defaultMash_n1);
 
 	auto defaultMash_n2 = new Notification();
@@ -400,6 +434,7 @@ void BrewEngine::addDefaultMash()
 	defaultMash_n2->message = "Please Start Lautering/Sparging";
 	defaultMash_n2->timeFromStart = 85;
 	defaultMash_n2->buzzer = true;
+	defaultMash_n2->refStepIndex = 0;
 	defaultMash->notifications.push_back(defaultMash_n2);
 
 	this->mashSchedules.insert_or_assign(defaultMash->name, defaultMash);
@@ -453,6 +488,7 @@ void BrewEngine::addDefaultMash()
 	ryeMash_n1->message = "Please add Grains";
 	ryeMash_n1->timeFromStart = 5;
 	ryeMash_n1->buzzer = true;
+	ryeMash_n1->refStepIndex = 0;
 	ryeMash->notifications.push_back(ryeMash_n1);
 
 	auto ryeMash_n2 = new Notification();
@@ -460,6 +496,7 @@ void BrewEngine::addDefaultMash()
 	ryeMash_n2->message = "Please Start Lautering/Sparging";
 	ryeMash_n2->timeFromStart = 110;
 	ryeMash_n2->buzzer = true;
+	ryeMash_n2->refStepIndex = 0;
 	ryeMash->notifications.push_back(ryeMash_n2);
 
 	this->mashSchedules.insert_or_assign(ryeMash->name, ryeMash);
@@ -482,6 +519,7 @@ void BrewEngine::addDefaultMash()
 	boil_n1->message = "Please add Bittering Hops";
 	boil_n1->timeFromStart = 0;
 	boil_n1->buzzer = true;
+	boil_n1->refStepIndex = 0;
 	boil->notifications.push_back(boil_n1);
 
 	auto boil_n2 = new Notification();
@@ -489,6 +527,7 @@ void BrewEngine::addDefaultMash()
 	boil_n2->message = "Please add Aroma Hops";
 	boil_n2->timeFromStart = 55;
 	boil_n2->buzzer = true;
+	boil_n2->refStepIndex = 0;
 	boil->notifications.push_back(boil_n2);
 
 	this->mashSchedules.insert_or_assign(boil->name, boil);
@@ -907,7 +946,7 @@ void BrewEngine::start()
 		if (this->selectedMashScheduleName.empty() == false)
 		{
 			this->loadSchedule();
-			this->currentMashStep = 1; // 0 is current temp, so we can start at 1
+			this->currentMashStep = 0; // 0 is a fake first step
 			xTaskCreate(&this->controlLoop, "controlloop_task", 4096, this, 5, NULL);
 		}
 		else
@@ -941,149 +980,67 @@ void BrewEngine::loadSchedule()
 		ESP_LOGE(TAG, "Program with name: %s not found!", this->selectedMashScheduleName.c_str());
 		return;
 	}
-	auto schedule = pos->second;
+	auto schedule = pos->second; 
 
-	system_clock::time_point prevTime = std::chrono::system_clock::now();
-
+	// Clear existing schedule
 	for (auto const &step : this->executionSteps)
 	{
 		delete step.second;
 	}
 	this->executionSteps.clear();
 
+	// Clear notifications
+	for (auto const &notification : this->notifications)
+	{
+		delete notification;
+	}
+	this->notifications.clear();
+
+
 	this->currentExecutionStep = 0;
 	this->boilRun = schedule->boil;
 	int stepIndex = 0;
 
-	float prevTemp = this->temperature;
-	// insert the current as starting point
-	auto execStep0 = new ExecutionStep();
-	execStep0->time = prevTime;
-	execStep0->temperature = prevTemp;
-	execStep0->extendIfNeeded = false;
-	this->executionSteps.insert(std::make_pair(stepIndex, execStep0));
+	// set the current as starting point
+	system_clock::time_point SchedStartTime = std::chrono::system_clock::now() + seconds (0);  // The start time of the real first step
 
-	string iso_string = this->to_iso_8601(prevTime);
-	ESP_LOGI(TAG, "Time:%s, Temp:%f Extend:%d", iso_string.c_str(), prevTemp, execStep0->extendIfNeeded);
 
-	int extendNotifications = 0;
+	// add a fake step that will help initializing the first vaid step in control loop
+	auto fakeStep = new ExecutionStep();
+	fakeStep->time = SchedStartTime;
+	fakeStep->temperature = this->temperature;
+	fakeStep->allowBoost = false;
+	fakeStep->extendIfNeeded = false;
+
+	this->executionSteps.insert(std::make_pair(stepIndex, fakeStep));
+	
+	system_clock::time_point prevTime = SchedStartTime;
 
 	stepIndex++;
 
+	
 	for (auto const &step : schedule->steps)
 	{
-		// a step can actualy be 2 different executions, 1 step time that needs substeps calcualted, and one fixed
+		// a step is actualy  2 different executions, 1 step time that change temp and one that holds it
+		auto stepEndTime = prevTime + minutes(step->stepTime);		
 
-		if (step->stepTime > 0 || step->extendStepTimeIfNeeded)
-		{
+		// insert the next step
+		auto execStep = new ExecutionStep();
+		execStep->time = stepEndTime;
+		execStep->temperature = (float)step->temperature;
+		execStep->allowBoost = step->allowBoost;
+		execStep->extendIfNeeded = step->extendStepTimeIfNeeded;
 
-			int stepTime = step->stepTime;
+		this->executionSteps.insert(std::make_pair(stepIndex, execStep));
 
-			// when the users request step extended, we need a step so 0 isn't valid we default to 1 min
-			if (stepTime == 0)
-			{
-				stepTime = 1;
-				extendNotifications += 60;
-			}
+		string iso_string = this->to_iso_8601(stepEndTime);
+		ESP_LOGI(TAG, "Step endtime:%s, Temp:%f Extend:%d", iso_string.c_str(), (float)step->temperature, step->extendStepTimeIfNeeded);
 
-			auto stepEndTime = prevTime + minutes(stepTime);
+		prevTime = stepEndTime;
+		stepIndex++;
+	
 
-			int subStepsInStep;
-
-			// When boost mode is active we don't want substeps this only complicates things
-			if (step->allowBoost && this->boostModeUntil > 0)
-			{
-				subStepsInStep = 1;
-			}
-			else
-			{
-				auto secondsInStep = chrono::duration_cast<chrono::seconds>(stepEndTime - prevTime).count();
-				subStepsInStep = (secondsInStep / this->stepInterval);
-
-				// we need atleast one step
-				if (subStepsInStep < 1)
-				{
-					subStepsInStep = 1;
-				}
-			}
-
-			float tempDiffPerStep = (step->temperature - prevTemp) / (float)subStepsInStep;
-
-			float prevStepTemp = 0;
-
-			for (int j = 0; j < subStepsInStep; j++)
-			{
-				system_clock::time_point executionStepTime = prevTime;
-				executionStepTime += seconds((j + 1) * stepInterval);
-
-				float subStepTemp = prevTemp + (tempDiffPerStep * ((float)j + 1));
-
-				// insert the current as starting point
-				auto execStep = new ExecutionStep();
-				execStep->time = executionStepTime;
-				execStep->temperature = subStepTemp;
-				execStep->extendIfNeeded = false;
-
-				if (step->allowBoost && this->boostModeUntil > 0)
-				{
-					execStep->allowBoost = true;
-				}
-				else
-				{
-					execStep->allowBoost = false;
-				}
-
-				// set extend if needed on last step if configured
-				if (j == (subStepsInStep - 1) && step->extendStepTimeIfNeeded)
-				{
-					execStep->extendIfNeeded = true;
-				}
-
-				float diff = abs(subStepTemp - prevStepTemp);
-				// ESP_LOGI(TAG, "Diff:%f, subStepTemp:%f prevStepTemp:%f", diff, subStepTemp, prevStepTemp);
-
-				// only insert if difference or if last step more then 1 degree
-				if (diff > 1 || (j == subStepsInStep - 1))
-				{
-					this->executionSteps.insert(std::make_pair(stepIndex, execStep));
-					prevStepTemp = execStep->temperature;
-					stepIndex++;
-
-					// Convert the time_point to an ISO 8601 string
-					string iso_string = this->to_iso_8601(executionStepTime);
-
-					ESP_LOGI(TAG, "Time:%s, Temp:%f Extend:%d", iso_string.c_str(), subStepTemp, execStep->extendIfNeeded);
-				}
-			}
-
-			prevTime = stepEndTime;
-			prevTemp = prevStepTemp;
-		}
-		else
-		{
-			// we start in 10 seconds
-			auto stepEndTime = prevTime + seconds(10);
-
-			// go directly to temp
-			auto execStep = new ExecutionStep();
-			execStep->time = stepEndTime;
-			execStep->temperature = (float)step->temperature;
-			execStep->extendIfNeeded = step->extendStepTimeIfNeeded;
-
-			this->executionSteps.insert(std::make_pair(stepIndex, execStep));
-
-			stepIndex++;
-
-			// Convert the time_point to an ISO 8601 string
-			string iso_string = this->to_iso_8601(prevTime);
-
-			ESP_LOGI(TAG, "Time:%s, Temp:%f Extend:%d", iso_string.c_str(), (float)step->temperature, execStep->extendIfNeeded);
-
-			prevTime = stepEndTime;
-			prevTemp = (float)step->temperature;
-		}
-
-		// for the hold time we just need add one point
+		// insert next hold time
 		auto holdEndTime = prevTime + minutes(step->time);
 
 		auto holdStep = new ExecutionStep();
@@ -1092,32 +1049,28 @@ void BrewEngine::loadSchedule()
 		holdStep->extendIfNeeded = false;
 
 		this->executionSteps.insert(std::make_pair(stepIndex, holdStep));
-		stepIndex++;
+
+		iso_string = this->to_iso_8601(holdEndTime);
+		ESP_LOGI(TAG, "Hold endtime:%s, Temp:%f ", iso_string.c_str(), (float)holdStep->temperature);
 
 		prevTime = holdEndTime;
-		prevTemp = step->temperature; // is normaly the same but this could change in futrure
 
-		string iso_string2 = this->to_iso_8601(holdEndTime);
-		ESP_LOGI(TAG, "Hold Time:%s, Temp:%f ", iso_string2.c_str(), (float)step->temperature);
+		stepIndex++;
 	}
-
-	// also add notifications
-	for (auto const &notification : this->notifications)
-	{
-		delete notification;
-	}
-	this->notifications.clear();
-
+	
+	// Add notifications to schedule
 	for (auto const &notification : schedule->notifications)
 	{
-		auto notificationTime = execStep0->time + minutes(notification->timeFromStart) + seconds(extendNotifications);
+		// Schedule notification with a small delay to secure that notification is not triggered before inOverTime flag is fired in GUI
+		auto notificationTime = SchedStartTime + minutes(notification->timeAbsolute); 
 
 		// copy notification to new map
 		auto newNotification = new Notification();
 		newNotification->name = notification->name;
 		newNotification->message = notification->message;
-		newNotification->timeFromStart = notification->timeFromStart + (extendNotifications / 60); // in minutes
+		newNotification->timeFromStart = notification->timeAbsolute; // in minutes
 		newNotification->timePoint = notificationTime;
+		newNotification->done = false;
 
 		this->notifications.push_back(newNotification);
 	}
@@ -1126,9 +1079,9 @@ void BrewEngine::loadSchedule()
 	this->runningVersion++;
 }
 
-void BrewEngine::recalculateScheduleAfterOverTime()
+void BrewEngine::recalculateScheduleAfterOverTime(const uint extraSeconds)
 {
-	ESP_LOGI(TAG, "Recalculate Schedule after OverTime");
+	ESP_LOGI(TAG, "Shifting Schedule during OverTime");
 
 	int currentStepIndex = this->currentMashStep;
 
@@ -1141,23 +1094,11 @@ void BrewEngine::recalculateScheduleAfterOverTime()
 		return;
 	}
 
-	auto currentStep = currentPos->second;
-	system_clock::time_point plannedEnd = currentStep->time;
-
-	system_clock::time_point now = std::chrono::system_clock::now();
-	auto extraSeconds = chrono::duration_cast<chrono::seconds>(now - plannedEnd).count();
 
 	for (auto it = currentPos; it != this->executionSteps.end(); ++it)
 	{
 		auto step = it->second;
-		auto newTime = step->time + seconds(extraSeconds);
-
-		string iso_string = this->to_iso_8601(step->time);
-		string iso_string2 = this->to_iso_8601(newTime);
-
-		ESP_LOGI(TAG, "Time Changend From: %s, To:%s ", iso_string.c_str(), iso_string2.c_str());
-
-		step->time = newTime;
+		step->time += seconds(extraSeconds);
 	}
 
 	// also increase notifications
@@ -1165,15 +1106,7 @@ void BrewEngine::recalculateScheduleAfterOverTime()
 	{
 		if (!notification->done)
 		{
-			auto newTime = notification->timePoint + seconds(extraSeconds);
-			
-
-			string iso_string = this->to_iso_8601(notification->timePoint);
-			string iso_string2 = this->to_iso_8601(newTime);
-
-			ESP_LOGI(TAG, "Notification Time Changend From: %s, To:%s ", iso_string.c_str(), iso_string2.c_str());
-
-			notification->timePoint = newTime;
+			notification->timePoint += seconds(extraSeconds);
 		}
 	}
 
@@ -1373,12 +1306,11 @@ void BrewEngine::readLoop(void *arg)
 			}
 		}
 
-		float avg = sum / nrOfSensors;
-/*		float avg = 0;
+		float avg = 0;
 		if (nrOfSensors > 0) 
 		{
 			avg = sum / nrOfSensors;
-		}*/
+		}
 
 		ESP_LOGD(TAG, "Avg Temperature: %.2f°", avg);
 
@@ -1463,7 +1395,6 @@ void BrewEngine::pidLoop(void *arg)
 	// we calculate the total wattage we have availible, depens on heaters and on mash or boil
 	for (auto &heater : instance->heaters)
 	{
-
 		if (instance->boilRun && heater->useForBoil)
 		{
 			totalWattage += heater->watt;
@@ -1480,12 +1411,12 @@ void BrewEngine::pidLoop(void *arg)
 		}
 	}
 
-	while (instance->run && instance->controlRun)
+	while (instance->run && instance->controlRun && !instance->restRun)
 	{
 		// Output is %
 		int outputPercent = (int)pid.getOutput((double)instance->temperature, (double)instance->targetTemperature);
 		instance->pidOutput = outputPercent;
-		ESP_LOGI(TAG, "Pid Output: %d Target: %f", instance->pidOutput, instance->targetTemperature);
+		ESP_LOGD(TAG, "Pid Output: %d Target: %f", instance->pidOutput, instance->targetTemperature);
 
 		// Manual override and boost
 		if (instance->manualOverrideOutput.has_value())
@@ -1554,7 +1485,7 @@ void BrewEngine::pidLoop(void *arg)
 					heater->burnTime=100 - instance->relayGuard;
 				}
 				
-				ESP_LOGD(TAG, "Pid Calc Heater %s: OutputWatt: %d Burn: %d", heater->name.c_str(), outputWatt, heater->burnTime);
+				ESP_LOGI(TAG, "Pid Calc Heater %s: OutputWatt: %d Burn: %d", heater->name.c_str(), outputWatt, heater->burnTime);
 				break;
 			}
 			else
@@ -1675,167 +1606,216 @@ void BrewEngine::controlLoop(void *arg)
 
 	// the pid needs to reset one step later so the next temp is set, oherwise it has a delay
 	bool resetPIDNextStep = false;
+	// Mark hold steps with flag to simplify calculations
+	bool hold = true;
+	//Indicates that the program / notifications is done, however remaining notifications may present
+	bool noMoreStep = false;
+	bool noMoreNotification = true;
 
-	// For boost mode to see if temp starts to drop
-	float prevTemperature = instance->temperature;
-	uint boostUntil = 0;
+	uint boostUntil;	// The Boost limit temperature
+	uint tempRate;		// The percentage of target temperature within a temp increasing step
+	bool noDelay;		// Do the next cycle without delay
+	
+	// Signal if target temperature has been reached
+	bool targetReached = false;
+	
+	// Clear override temp
+	// Clear override %
+
+	instance->restRun = false;
+	instance->inOverTime = false;
+
+	auto currentStep = instance->executionSteps.at(instance->currentMashStep);
+	auto prevStep = currentStep;
+	instance->targetTemperature = instance->temperature; //As a first approach. Perfect for zero legth step
 
 	while (instance->run && instance->controlRun)
 	{
 
 		system_clock::time_point now = std::chrono::system_clock::now();
+		// No extend step if step final target is reached or override temp is reached
+		// Target temparature was set in previous cycle, and and step temp at first run.
+		targetReached = (targetReached || (abs(instance->targetTemperature - instance->temperature) <= instance->tempMargin));
 
-		if (instance->executionSteps.size() >= instance->currentMashStep)
-		{ // there are more steps
-			int nextStepIndex = instance->currentMashStep;
-
-			auto nextStep = instance->executionSteps.at(nextStepIndex);
-
-			system_clock::time_point nextAction = nextStep->time;
-
-			bool gotoNextStep = false;
-
-			// set target when not overriden
+		if (now < currentStep->time)
+		//Step shall continue to run
+		{
+			// calculate the elapsed time in percent. Add PID loop time as the goal temp is targeted at PID loop done
+			if ((!hold) && ((currentStep->time - prevStep->time).count() > instance->pidLoopTime) )
+			{
+				tempRate = (uint)
+				100 * ((now + seconds(instance->pidLoopTime) - prevStep->time).count()) /
+				((currentStep->time - prevStep->time).count());
+				if (tempRate > 100)
+				{
+					tempRate = 100;
+				}
+			}
+			else 
+			{
+				tempRate = 100;
+			}
+						
+			// Calculate actual target temperature. Override if needed
 			if (instance->overrideTargetTemperature.has_value())
 			{
 				instance->targetTemperature = instance->overrideTargetTemperature.value();
 			}
 			else
 			{
-				instance->targetTemperature = nextStep->temperature;
+				instance->targetTemperature = prevStep->temperature + (currentStep->temperature -  prevStep->temperature) * (float) tempRate / 100;
 			}
 
-			uint secondsToGo = 0;
-			// if its smaller 0 is ok!
-			if (nextAction > now)
+			// Handle boost mode
+			// There is a risk that boost will flapping or switch on with delay due to sliding target temp calculation and increase
+			if (currentStep->allowBoost)
 			{
-				secondsToGo = chrono::duration_cast<chrono::seconds>(nextAction - now).count();
-			}
-
-			// Boost mode logic
-			if (nextStep->allowBoost)
-			{
-				if (boostUntil == 0)
-				{
-					boostUntil = (uint)((nextStep->temperature / 100) * (float)instance->boostModeUntil);
-				}
+				boostUntil = (uint)((((instance->targetTemperature - prevStep->temperature)  * (float)instance->boostModeUntil) / 100) + prevStep->temperature);
 
 				if (instance->boostStatus == Off && instance->temperature < boostUntil)
 				{
-
 					ESP_LOGI(TAG, "Boost Start Until: %d", boostUntil);
 					instance->logRemote("Boost Start");
 					instance->boostStatus = Boost;
+					resetPIDNextStep = true;
 				}
 				else if (instance->boostStatus == Boost && instance->temperature >= boostUntil)
 				{
-					// When in boost mode we wait unit boost temp is reched, pid is locked to 100% in boost mode
-					ESP_LOGI(TAG, "Boost Rest Start");
-					instance->logRemote("Boost Rest Start");
-					instance->boostStatus = Rest;
-				}
-				else if (instance->boostStatus == Rest && instance->temperature < prevTemperature)
-				{
-					// When in boost rest mode, we wait until temperature drops pid is locked to 0%
-					ESP_LOGI(TAG, "Boost Rest End");
-					instance->logRemote("Boost Rest End");
+					// Go immediatelly to boost off
+					ESP_LOGI(TAG, "Boost End");
+					instance->logRemote("Boost End");
 					instance->boostStatus = Off;
-
-					// Reset pid
-					instance->resetPitTime = true;
+					resetPIDNextStep = true;
 				}
 			}
-
-			if (secondsToGo < 1)
-			{ // change temp and increment Currentstep
-
-				// string iso_string = instance->to_iso_8601(nextStep->time);
-				// ESP_LOGI(TAG, "Control Time:%s, TempCur:%f, TempTarget:%d, Extend:%d, Overtime: %d", iso_string.c_str(), instance->temperature, nextStep->temperature, nextStep->extendIfNeeded, instance->inOverTime);
-
-				if (nextStep->extendIfNeeded == true && instance->inOverTime == false && (nextStep->temperature - instance->temperature) >= instance->tempMargin)
+			// Special handling if extendable step is close to finish
+			if (currentStep->extendIfNeeded && !instance->inOverTime)
+			{
+				if ((now > (currentStep->time - seconds(instance->overTimeTrigger))) && !targetReached)		// End of extendable step within 5 seconds and target is not reached
 				{
-					// temp must be reached, we keep going but need to triger a recaluclation event when done
-					ESP_LOGI(TAG, "OverTime Start");
-					instance->logRemote("OverTime Start");
-					instance->inOverTime = true;
+					instance->inOverTime = true;						// Suspend popups that may triggered at scheduled endtime ot this step
+					ESP_LOGI(TAG, "Entering into time extension, popups disabled");
 				}
-				else if (instance->inOverTime == true && (nextStep->temperature - instance->temperature) <= instance->tempMargin)
-				{
-					// we reached out temp after overtime, we need to recalc the rest and start going again
-					ESP_LOGI(TAG, "OverTime Done");
-					instance->logRemote("OverTime Done");
-					instance->inOverTime = false;
-					instance->recalculateScheduleAfterOverTime();
-					gotoNextStep = true;
-				}
-				else if (instance->inOverTime == false)
-				{
-					ESP_LOGI(TAG, "Going to next Step");
-					gotoNextStep = true;
-					// also reset override on step change
-					instance->overrideTargetTemperature = std::nullopt;
-				}
-
-				// else when in overtime just keep going until we reach temp
 			}
-
-			// the pid needs to reset one step later so the next temp is set, oherwise it has a delay
+			else
+			{
+				targetReached = false ;			// do not care until the end
+			}
+			
+			// PID reset
 			if (resetPIDNextStep)
 			{
-				resetPIDNextStep = false;
-				instance->resetPitTime = true;
+					// Reset pid
+					instance->resetPitTime = true;
+					resetPIDNextStep = false;
 			}
-
-			if (gotoNextStep)
+			noDelay = false;
+		}
+		
+		// Scheduled endtime reached
+		else if ((!currentStep->extendIfNeeded) || targetReached)
+		//Start next step
+		{
+			// Exit from overtime and update web to re-enable pending notification
+			if (instance->inOverTime)
+			{
+				instance->runningVersion++;
+				instance->inOverTime = false;
+			}
+			
+			if (instance->executionSteps.size() < (instance->currentMashStep + 2))
+			{	
+				// There are no more steps
+				// Indicate stop
+				// Rest
+				if (!noMoreStep)
+				{
+					noMoreStep = true;
+					instance->boostStatus = Off;
+					instance->overrideTargetTemperature = std::nullopt;
+					instance->manualOverrideOutput = std::nullopt;
+					instance->targetTemperature = 0;
+					instance->restRun = true;
+					instance->resetPitTime = true;
+					noDelay = false;
+					ESP_LOGI(TAG, "No more step");
+				}	
+			}
+			else
 			{
 				instance->currentMashStep++;
+				prevStep = currentStep;
+				currentStep = instance->executionSteps.at(instance->currentMashStep);
+				
+				hold = (currentStep->temperature == prevStep->temperature);
+				
+				instance->targetTemperature = currentStep->temperature;
+				// Target temp would be recalculated in next cycle, we need a PID reset after
+				targetReached = false;		// To be updated in next cycle
+				resetPIDNextStep = true;   // To be reset in next cycle, beacuse actual target temp migth be changing
 
-				// Also reset boost
+				// disable boost. could be set right in next cycle. No problem, PID reset is delayed anyway.
 				instance->boostStatus = Off;
-
-				resetPIDNextStep = true;
-			}
-
-			// notifications, but only when not in overtime
-			if (!instance->inOverTime && !instance->notifications.empty())
-			{
-				// filter out items that are not done
-				auto isNotDone = [](Notification *notification)
-				{ return notification->done == false; };
-
-				auto notDone = instance->notifications | views::filter(isNotDone);
-
-				if (!notDone.empty())
-				{
-					// they are sorted so we just have to check the first one
-					auto first = notDone.front();
-
-					if (now > first->timePoint)
-					{
-						ESP_LOGI(TAG, "Notify %s", first->name.c_str());
-
-						string buzzerName = "buzzer" + first->name;
-						xTaskCreate(&instance->buzzer, buzzerName.c_str(), 1024, instance, 10, NULL);
-						instance->soundTime = instance->buzzerTime * 1000;
-						instance->soundBurst = 300 ; // in milliseconds
-						xTaskCreate(&instance->speaker, buzzerName.c_str(), 4096, instance, 10, NULL);
-
-						first->done = true;
-					}
-				}
+				
+				// also reset overrides on step change
+				instance->overrideTargetTemperature = std::nullopt;
+				instance->manualOverrideOutput = std::nullopt;
+				 
+				// When we enter into a zero length, extendable step lets have one second delay to allow triggering the notification scheduled at start timepoint
+				// Otherwise go with no delay
+				noDelay = ((currentStep->time > prevStep->time) || !currentStep->extendIfNeeded);
+				ESP_LOGI(TAG, "Next step started");
 			}
 		}
 		else
+		// Extend step because target temp is not reached OR zero length extandable period is starting
 		{
-			// last step need to stop
+			instance->recalculateScheduleAfterOverTime(instance->overTimeStep);	//Shift step end, remainig steps and notifications by Xs
+			ESP_LOGI(TAG, "Extend step");
+			noDelay = true; // Process next cycle with no delay
+		}
+		
+		// Send notification
+		noMoreNotification = true;			// Unless there is remaining
+		if (!instance->notifications.empty() && !instance->inOverTime)
+		{
+			// filter out items that are not done
+			auto isNotDone = [](Notification *notification)
+			{ return notification->done == false; };
+
+			auto notDone = instance->notifications | views::filter(isNotDone);
+
+			if (!notDone.empty())
+			{
+				// they are sorted so we just have to check the first one
+				noMoreNotification = false;
+				auto first = notDone.front();
+
+				if (now >= first->timePoint) 
+				{
+					ESP_LOGI(TAG, "Notify %s", first->name.c_str());
+
+					string buzzerName = "buzzer" + first->name;
+					xTaskCreate(&instance->buzzer, buzzerName.c_str(), 1024, instance, 10, NULL);
+					instance->soundTime = instance->buzzerTime * 1000;
+					instance->soundBurst = 300 ; // in milliseconds
+					xTaskCreate(&instance->speaker, buzzerName.c_str(), 4096, instance, 10, NULL);
+
+					first->done = true;
+				}
+			}
+		}
+
+		if (!noDelay)
+		{
+			vTaskDelay(pdMS_TO_TICKS(1000));
+		}
+		if (noMoreStep && noMoreNotification)
+		{
+			// Everything is done
 			ESP_LOGI(TAG, "Program Finished");
 			instance->stop();
 		}
-
-		// For boost mode to see if temp starts to drop
-		prevTemperature = instance->temperature;
-
-		vTaskDelay(pdMS_TO_TICKS(1000));
 	}
 
 	vTaskDelete(NULL);
@@ -2152,12 +2132,18 @@ string BrewEngine::processCommand(const string &payLoad)
 	else if (command == "SaveMashSchedule")
 	{
 		this->setMashSchedule(data);
-
+		
 		this->saveMashSchedules();
+		
+		this->calcNotificationTime();		// Update runtime 
+
 	}
 	else if (command == "SetMashSchedule") // used by import function to set but not save
 	{
 		this->setMashSchedule(data);
+		
+		this->calcNotificationTime();
+
 	}
 	else if (command == "DeleteMashSchedule")
 	{

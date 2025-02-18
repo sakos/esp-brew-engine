@@ -109,7 +109,9 @@ const parseBeer = (beerToImport: Element) => {
           timePoint: 0,
           buzzer: true,
           done: false,
-        };
+	      refStepIndex: 0,
+		  timeAbsolute: totalMashTime,
+         };
 
         beer.mashNotifications.push(notification);
       }
@@ -161,7 +163,9 @@ const parseBeer = (beerToImport: Element) => {
         timeFromStart: grainAddTime,
         timePoint: 0,
         buzzer: true,
-      };
+        refStepIndex: 0,
+		timeAbsolute: grainAddTime,
+     };
 
       beer.mashNotifications.push(notification);
     }
@@ -173,6 +177,8 @@ const parseBeer = (beerToImport: Element) => {
         timeFromStart: boilTime,
         timePoint: 0,
         buzzer: true,
+        refStepIndex: 0,
+		timeAbsolute: boilTime,
       };
 
       beer.boilNotifications.push(notification);
@@ -233,6 +239,8 @@ const parseBeer = (beerToImport: Element) => {
           timeFromStart: hopAddTime,
           timePoint: 0,
           buzzer: true,
+          refStepIndex: 0,
+		  timeAbsolute: hopAddTime,
         };
 
         beer.boilNotifications.push(notification);
@@ -245,6 +253,8 @@ const parseBeer = (beerToImport: Element) => {
           timeFromStart: hopAddTime,
           timePoint: 0,
           buzzer: true,
+          refStepIndex: 0,
+		  timeAbsolute: hopAddTime,
         };
 
         beer.mashNotifications.push(notification);
@@ -277,6 +287,8 @@ const parseBeer = (beerToImport: Element) => {
           timeFromStart: miscAddTime,
           timePoint: 0,
           buzzer: true,
+          refStepIndex: 0,
+		  timeAbsolute: miscAddTime,
         };
 
         beer.boilNotifications.push(notification);
@@ -287,6 +299,8 @@ const parseBeer = (beerToImport: Element) => {
           timeFromStart: 0,
           timePoint: 0,
           buzzer: true,
+          refStepIndex: 0,
+		  timeAbsolute: 0,
         };
 
         beer.mashNotifications.push(notification);
@@ -329,7 +343,9 @@ const parseBeer = (beerToImport: Element) => {
         timeFromStart: key,
         timePoint: 0,
         buzzer,
-      };
+        refStepIndex: 0,
+		timeAbsolute: key,
+     };
       beer.mashNotificationsGrouped.push(newNotification);
     }
   });
@@ -368,7 +384,9 @@ const parseBeer = (beerToImport: Element) => {
         timeFromStart: key,
         timePoint: 0,
         buzzer,
-      };
+        refStepIndex: 0,
+		timeAbsolute: key,
+     };
       beer.boilNotificationsGrouped.push(newNotification);
     }
   });
