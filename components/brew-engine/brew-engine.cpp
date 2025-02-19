@@ -90,6 +90,8 @@ void BrewEngine::Init()
 	this->run = true;
 	
 	this->powerUsage = 0;
+	
+	this->currentStepName = "";
 
 
 	xTaskCreate(&this->readLoop, "readloop_task", 4096, this, 5, NULL);
@@ -1005,7 +1007,7 @@ void BrewEngine::loadSchedule()
 	int stepIndex = 0;
 
 	// set the current as starting point
-	system_clock::time_point SchedStartTime = std::chrono::system_clock::now() + seconds (0);  // The start time of the real first step
+	system_clock::time_point SchedStartTime = std::chrono::system_clock::now() + seconds (2);  // The start time of the real first step
 
 
 	// add a fake step that will help initializing the first vaid step in control loop
@@ -1014,6 +1016,7 @@ void BrewEngine::loadSchedule()
 	fakeStep->temperature = this->temperature;
 	fakeStep->allowBoost = false;
 	fakeStep->extendIfNeeded = false;
+	fakeStep->stepName = "Starting...";
 
 	this->executionSteps.insert(std::make_pair(stepIndex, fakeStep));
 	
@@ -1033,6 +1036,8 @@ void BrewEngine::loadSchedule()
 		execStep->temperature = (float)step->temperature;
 		execStep->allowBoost = step->allowBoost;
 		execStep->extendIfNeeded = step->extendStepTimeIfNeeded;
+		execStep->stepName = step->name;
+		
 
 		this->executionSteps.insert(std::make_pair(stepIndex, execStep));
 
@@ -1049,7 +1054,10 @@ void BrewEngine::loadSchedule()
 		auto holdStep = new ExecutionStep();
 		holdStep->time = holdEndTime;
 		holdStep->temperature = (float)step->temperature;
+		holdStep->allowBoost = false;
 		holdStep->extendIfNeeded = false;
+		holdStep->stepName = step->name;
+
 
 		this->executionSteps.insert(std::make_pair(stepIndex, holdStep));
 
@@ -1123,6 +1131,7 @@ void BrewEngine::stop()
 	this->boostStatus = Off;
 	this->inOverTime = false;
 	this->statusText = "Idle";
+	this->currentStepName = "";	
 }
 
 void BrewEngine::startStir(const json &stirConfig)
@@ -1635,6 +1644,8 @@ void BrewEngine::controlLoop(void *arg)
 	auto currentStep = instance->executionSteps.at(instance->currentMashStep);
 	auto prevStep = currentStep;
 	instance->targetTemperature = instance->temperature; //As a first approach. Perfect for zero legth step
+	instance->currentStepName = currentStep->stepName; 
+
 
 	while (instance->run && instance->controlRun)
 	{
@@ -1643,6 +1654,7 @@ void BrewEngine::controlLoop(void *arg)
 		// No extend step if step final target is reached or override temp is reached
 		// Target temparature was set in previous cycle, and and step temp at first run.
 		targetReached = (targetReached || (abs(instance->targetTemperature - instance->temperature) <= instance->tempMargin));
+		
 
 		if (now < currentStep->time)
 		//Step shall continue to run
@@ -1719,7 +1731,7 @@ void BrewEngine::controlLoop(void *arg)
 			noDelay = false;
 		}
 		
-		// Scheduled endtime reached
+		// Scheduled endtime or target temp in overtime reached
 		else if ((!currentStep->extendIfNeeded) || targetReached)
 		//Start next step
 		{
@@ -1743,8 +1755,10 @@ void BrewEngine::controlLoop(void *arg)
 					instance->manualOverrideOutput = std::nullopt;
 					instance->targetTemperature = 0;
 					instance->restRun = true;
+					instance->statusText = "Resting";
 					instance->resetPitTime = true;
 					noDelay = false;
+					instance->currentStepName = "";
 					ESP_LOGI(TAG, "No more step");
 				}	
 			}
@@ -1771,14 +1785,25 @@ void BrewEngine::controlLoop(void *arg)
 				// When we enter into a zero length, extendable step lets have one second delay to allow triggering the notification scheduled at start timepoint
 				// Otherwise go with no delay
 				noDelay = ((currentStep->time > prevStep->time) || !currentStep->extendIfNeeded);
+				
+				// Update step name
+				if (hold) 
+				{
+					instance->currentStepName = currentStep->stepName + " - hold"; 
+				}
+				else
+				{
+					instance->currentStepName = currentStep->stepName;
+				}
+
 				ESP_LOGI(TAG, "Next step started");
 			}
 		}
 		else
-		// Extend step because target temp is not reached OR zero length extandable period is starting
+		// Extend step because target temp is not reached
 		{
 			instance->recalculateScheduleAfterOverTime(instance->overTimeStep);	//Shift step end, remainig steps and notifications by Xs
-			ESP_LOGI(TAG, "Extend step");
+			ESP_LOGD(TAG, "Extend step");
 			noDelay = true; // Process next cycle with no delay
 		}
 		
@@ -2017,6 +2042,7 @@ string BrewEngine::processCommand(const string &payLoad)
 			{"inOverTime", this->inOverTime},
 			{"boostStatus", this->boostStatus},
 			{"powerUsage", (int)(this->powerUsage / 3600)},
+			{"currentStepName", this->currentStepName},
 		};
 
 		if (this->manualOverrideOutput.has_value())

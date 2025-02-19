@@ -34,7 +34,7 @@ const manualOverrideOutput = ref<number | null>(null);
 const inOverTime = ref<boolean>(false);
 const boostStatus = ref<BoostStatus>(BoostStatus.Off);
 const powerUsage = ref<number>();
-
+const currentStepName = ref<string>();
 
 const intervalId = ref<any>();
 
@@ -404,7 +404,8 @@ const getData = async () => {
   inOverTime.value = apiResult.data.inOverTime;
   boostStatus.value = apiResult.data.boostStatus;
   powerUsage.value = apiResult.data.powerUsage;
-  const serverRunningVersion = apiResult.data.powerUsage;
+  currentStepName.value = apiResult.data.currentStepName
+  const serverRunningVersion = apiResult.data.runningVersion;
 
   if (status.value === "Running" && lastRunningVersion.value !== serverRunningVersion) {
     // the schedule has changed, we need to update
@@ -732,7 +733,7 @@ const labelTargetTemp = computed(() => {
         </v-col>
       </v-row>
       <v-row>
-        <v-col cols="12" md="6">
+        <v-col cols="12" md="3">
           <v-select
             :label="$t('control.mashSchedule')"
             :readonly="status !== 'Idle'"
@@ -742,6 +743,9 @@ const labelTargetTemp = computed(() => {
             :filled="appStore.mashSchedules"
             :clearable="status === 'Idle'"
             return-object />
+        </v-col>
+        <v-col cols="12" md="3">
+		  <v-text-field v-model="currentStepName" readonly :label="$t('current.step.name')" />
         </v-col>
         <v-col cols="12" md="3">
           <v-text-field

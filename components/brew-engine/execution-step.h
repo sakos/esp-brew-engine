@@ -15,6 +15,7 @@ public:
     float temperature;
     bool extendIfNeeded;
     bool allowBoost;
+	string stepName;
 
     json to_json()
     {
@@ -25,6 +26,7 @@ public:
         jStep["time"] = seconds;
         jStep["extendIfNeeded"] = this->extendIfNeeded;
         jStep["allowBoost"] = this->allowBoost;
+        jStep["stepName"] = this->stepName;
 
         return jStep;
     };

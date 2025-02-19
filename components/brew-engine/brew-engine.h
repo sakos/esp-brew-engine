@@ -151,8 +151,6 @@ private:
 	uint8_t heaterCycles = 1;
 	uint8_t relayGuard = 5;
 	
-    float powerUsage = 0;	// Calculates the consumed electric power
-
 
     // execution
     bool run = false;
@@ -169,12 +167,16 @@ private:
     string selectedMashScheduleName;
     uint16_t currentMashStep;
 
+    float powerUsage = 0;		// Calculates the consumed electric power
+	string currentStepName; 	// Show pending step name on control page
+	
+	
     std::map<uint16_t, ExecutionStep *> executionSteps; // calculated real steps
     uint16_t currentExecutionStep = 0;
     uint16_t stepInterval = 60;  // calcualte a substep every x seconds
     uint16_t runningVersion = 0; // we increase our version after recalc, so client can keep uptodate with planning
 	
-	const uint8_t overTimeTrigger = 5; // Time in seconds before step ends to pretrigger overtime. 0 would prevent notification delay
+	const uint8_t overTimeTrigger = 8; // Time in seconds before step ends to pretrigger overtime. 0 would prevent notification delay, sporadic fault with 5.
 	const uint8_t overTimeStep = 5; // Time in seconds the time added at each overtime shift.
 	
 
