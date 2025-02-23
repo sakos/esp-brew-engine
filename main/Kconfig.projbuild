@@ -92,13 +92,13 @@ config InvertOutputs
 			
      config SPEAKER1
         int "Speaker1 Pin"
-        default 27
+        default 0
         help
             Speaker 1 Pin
 
      config SPEAKER2
         int "Speaker2 Pin"
-        default 26
+        default 0
         help
             Speaker 2 Pin
 

@@ -106,9 +106,6 @@ const notificationDeleteItemOk = async () => {
 				<v-row>
                   <v-text-field type="number" v-model.number="editingNotification.refStepIndex" :label='t("notificationEditor.ref_step_index")' />
                 </v-row>
-//				<v-row>
-//                  <v-text-field type="number" v-model.number="editingNotification.timeAbsolute" :label='t("notificationEditor.time_absolute")' />
-//               </v-row>
                 <v-row>
                   <v-switch v-model="editingNotification.buzzer" :label='t("notificationEditor.buzzer")' color="red" />
                 </v-row>

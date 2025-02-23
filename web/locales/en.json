@@ -142,7 +142,9 @@
     "buzzer": "Buzzer",
     "actions": "Actions",
     "message": "Message",
-    "new_notification": "New Notification"
+    "new_notification": "New Notification",
+	"ref_step_index": "Relative to step",
+	"time_absolute": "Absolute time"
   },
   "stepEditor": {
     "index": "Index",
