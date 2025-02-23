@@ -44,10 +44,11 @@ public:
 
     PIDController(double p, double i, double d)
     {
-        if (p == 0 || i == 0 || d == 0)
+/*        if (p == 0 || i == 0 || d == 0)
         {
             throw std::invalid_argument("K,I or P should not be empty!");
-        }
+        } */		
+		// On one hand zero parameter works, on the other hand, this exemption causes crash.
 
         this->kp = p;
         this->ki = i;

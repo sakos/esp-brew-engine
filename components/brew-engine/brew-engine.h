@@ -133,6 +133,9 @@ private:
     // pid
     uint8_t pidOutput = 0;
     std::optional<int8_t> manualOverrideOutput = std::nullopt;
+	
+	bool resetManualOutput =false;					// Clear manual entered output value. This is to sync with WebGUI
+	bool resetManualTemp =false;					// Clear manual entered target temp value. This is to sync with WebGUI
 
     double mashkP = 10;
     double mashkI = 1;
@@ -169,6 +172,11 @@ private:
 
     float powerUsage = 0;		// Calculates the consumed electric power
 	string currentStepName; 	// Show pending step name on control page
+	
+    uint8_t pidOrigOutput = 0;	// PID calculation result
+    std::optional<uint8_t> outputOverrides = std::nullopt;	// Output override by system
+	
+
 	
 	
     std::map<uint16_t, ExecutionStep *> executionSteps; // calculated real steps

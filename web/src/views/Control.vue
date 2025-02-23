@@ -29,12 +29,16 @@ const stirStatus = ref<string>();
 const temperature = ref<number>();
 const outputPercent = ref<number>();
 const targetTemperature = ref<number>();
-const manualOverrideTemperature = ref<number>();
+const manualOverrideTemperature = ref<number | null>(null);
 const manualOverrideOutput = ref<number | null>(null);
 const inOverTime = ref<boolean>(false);
 const boostStatus = ref<BoostStatus>(BoostStatus.Off);
 const powerUsage = ref<number>();
 const currentStepName = ref<string>();
+const pidOrigOutput = ref<number>();
+const outputOverrides = ref<number>();
+const resetManualOutput = ref<boolean>();
+const resetManualTemp = ref<boolean>();
 
 const intervalId = ref<any>();
 
@@ -393,18 +397,26 @@ const getData = async () => {
   stirStatus.value = apiResult.data.stirStatus;
   temperature.value = apiResult.data.temp;
   outputPercent.value = apiResult.data.output;
-  manualOverrideOutput.value = apiResult.data.manualOverrideOutput;
-
-  if (focussedField.value !== "manualOverrideTemperature") {
-    manualOverrideTemperature.value = apiResult.data.manualOverrideTargetTemp;
-  }
-
   targetTemperature.value = apiResult.data.targetTemp;
   lastGoodDataDate.value = apiResult.data.lastLogDateTime;
   inOverTime.value = apiResult.data.inOverTime;
   boostStatus.value = apiResult.data.boostStatus;
   powerUsage.value = apiResult.data.powerUsage;
-  currentStepName.value = apiResult.data.currentStepName
+  currentStepName.value = apiResult.data.currentStepName;
+  pidOrigOutput.value = apiResult.data.pidOrigOutput;
+  outputOverrides.value = apiResult.data.outputOverrides;
+  resetManualOutput.value = apiResult.data.resetManualOutput;
+  resetManualTemp.value = apiResult.data.resetManualTemp;
+
+  if (resetManualOutput.value) {
+	manualOverrideOutput.value = null;
+  }
+  
+  if (resetManualTemp.value) {
+	manualOverrideTemperature.value = null;
+  }
+  
+  
   const serverRunningVersion = apiResult.data.runningVersion;
 
   if (status.value === "Running" && lastRunningVersion.value !== serverRunningVersion) {
@@ -468,16 +480,15 @@ const getData = async () => {
   }
 };
 
-const changeTargetTemp = async () => {
-  if (manualOverrideTemperature.value === undefined) {
+const changeTargetTemp = (event: any) => {
+  if (event.target.value === undefined) {
     return;
   }
-
-  // for some reason value is still a string while ref defined as number, bug in vue?
-  const forceInt = Number.parseInt(manualOverrideTemperature.value?.toString(), 10);
+    
+  const forceInt = Number.parseInt(event.target.value.toString(), 10);
 
   const requestData = {
-    command: "SetTemp",
+    command: "SetOverrideTemp",
     data: {
       targetTemp: forceInt,
     },
@@ -491,7 +502,6 @@ const changeOverrideOutput = (event: any) => {
   if (event.target.value === undefined) {
     return;
   }
-
   const forceInt = Number.parseInt(event.target.value.toString(), 10);
 
   const requestData = {
@@ -504,6 +514,7 @@ const changeOverrideOutput = (event: any) => {
   webConn?.doPostRequest(requestData);
   // todo capture error
 };
+
 
 const setStartDateNow = () => {
   const now = new Date();
@@ -573,15 +584,6 @@ const stopStir = async () => {
 
 const debounceTargetTemp = debounce(changeTargetTemp, 1000);
 
-watch(() => manualOverrideTemperature.value, debounceTargetTemp);
-
-watch(selectedMashSchedule, () => {
-  // reset all our data so we can start over
-  currentTemps.value = [];
-  executionSteps.value = [];
-  rawData.value = [];
-  setStartDateNow();
-});
 
 const initChart = () => {
   ChartJS.register(Title, Tooltip, Legend, PointElement, LineElement, TimeScale, LinearScale, CategoryScale, Filler, annotationPlugin);
@@ -718,7 +720,7 @@ const labelTargetTemp = computed(() => {
       <v-row style="height: 50vh">
         <Line v-if="chartInitDone && chartData" :options="chartOptions" :data="chartData" />
       </v-row>
-      <v-row>
+      <v-row no-gutters>
         <v-col cols="12" md="3">
           <v-text-field v-model="displayStatus" readonly :label="$t('control.status')" />
         </v-col>
@@ -728,11 +730,37 @@ const labelTargetTemp = computed(() => {
         <v-col cols="12" md="3">
           <v-text-field v-model="targetTemperature" readonly :label="`${$t('control.target')} (${appStore.tempUnit})`" />
         </v-col>
-        <v-col cols="12" md="3">
-          <v-text-field v-model="manualOverrideTemperature" @focus="focussedField = 'manualOverrideTemperature'" @blur="focussedField = ''" type="number" :label="labelTargetTemp" />
+		<v-col cols="12" md="3">
+          <v-text-field
+            v-model.number="outputPercent"
+            type="number"
+            :label="$t('control.output')"
+            readonly />
         </v-col>
       </v-row>
-      <v-row>
+      <v-row no-gutters>
+		<v-col cols="12" md="3">
+          <v-text-field
+            v-model.number="pidOrigOutput"
+            type="number"
+            :label="$t('control.pid_orig_output')"
+            readonly />
+        </v-col>
+		<v-col cols="12" md="3">
+          <v-text-field
+            v-model.number="outputOverrides"
+            type="number"
+            :label="$t('control.output_overrides')"
+            readonly />
+        </v-col>
+		<v-col cols="12" md="3">
+         <v-text-field v-model="manualOverrideTemperature" type="number" :label="labelTargetTemp" @change="changeTargetTemp" />  
+        </v-col>
+        <v-col cols="12" md="3">
+         <v-text-field v-model="manualOverrideOutput" type="number" :label="$t('control.set_override_output')" @change="changeOverrideOutput" />  
+        </v-col>
+      </v-row>
+      <v-row no-gutters>
         <v-col cols="12" md="3">
           <v-select
             :label="$t('control.mashSchedule')"
@@ -745,21 +773,10 @@ const labelTargetTemp = computed(() => {
             return-object />
         </v-col>
         <v-col cols="12" md="3">
-		  <v-text-field v-model="currentStepName" readonly :label="$t('current.step.name')" />
+		  <v-text-field v-model="currentStepName" readonly :label="$t('control.current_step_name')" />
         </v-col>
         <v-col cols="12" md="3">
-          <v-text-field
-            v-model.number="outputPercent"
-            type="number"
-            :label="$t('control.output')"
-            readonly />
-        </v-col>
-        <v-col cols="12" md="3">
-          <v-text-field
-            v-model.number="powerUsage"
-            type="number"
-			:label="$t('power.consumption')"
-			readonly />          
+          <v-text-field v-model="powerUsage" readonly :label="$t('control.power_consumption')" />          
         </v-col>
 
       </v-row>
@@ -767,16 +784,6 @@ const labelTargetTemp = computed(() => {
         <v-col cols="12" md="6">
           <v-btn v-if="status === 'Idle'" color="success" class="mt-4" block @click="start"> {{ $t('control.start') }} </v-btn>
           <v-btn v-else color="error" class="mt-4" block @click="stop"> {{ $t('control.stop') }} </v-btn>
-        </v-col>
-        <v-col cols="12" md="3">
-          <v-text-field
-            v-model.number="manualOverrideOutput"
-            type="number"
-            :label="$t('control.override_output')"
-            readonly />
-        </v-col>
-        <v-col cols="12" md="3">
-          <v-text-field type="number" :label="$t('control.set_override_output')" @change="changeOverrideOutput" />
         </v-col>
 
       </v-row>

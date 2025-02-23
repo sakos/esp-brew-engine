@@ -937,7 +937,8 @@ void BrewEngine::start()
 		this->controlRun = true;
 		this->inOverTime = false;
 		this->boostStatus = Off;
-		this->overrideTargetTemperature = std::nullopt;
+		this->targetTemperature = this->temperature; // If nothing is selected
+
 		// clear old temp log
 		this->tempLog.clear();
 
@@ -947,18 +948,38 @@ void BrewEngine::start()
 			delete step.second;
 		}
 		this->executionSteps.clear();
+		
+		// Clear notifications
+		for (auto const &notification : this->notifications)
+		{
+			delete notification;
+		}
+		this->notifications.clear();
+
 
 		if (this->selectedMashScheduleName.empty() == false)
 		{
 			this->loadSchedule();
 			this->currentMashStep = 0; // 0 is a fake first step
+			this->overrideTargetTemperature = std::nullopt;
+			this->manualOverrideOutput = std::nullopt;
+			this->resetManualOutput = true; // Clear manual inputs
+			this->resetManualTemp = true; // Clear manual inputs
+
 			xTaskCreate(&this->controlLoop, "controlloop_task", 4096, this, 5, NULL);
 		}
 		else
 		{
 
-			// if no schedule is selected, we set the boil flag based on temperature
-			if ((this->temperatureScale == Celsius && this->targetTemperature >= 100) || (this->temperatureScale == Fahrenheit && this->targetTemperature >= 212))
+			if (this->overrideTargetTemperature.has_value())
+			{
+				this->targetTemperature = this->overrideTargetTemperature.value();
+				this->manualOverrideOutput = std::nullopt;		// Cannot be set both. Target temp has prio
+				this->resetManualOutput = true; // Clear manual inputs					
+			}
+
+			// if no schedule is selected, we set the boil flag based on target temperature
+			if ((this->temperatureScale == Celsius && this->targetTemperature >= 97) || (this->temperatureScale == Fahrenheit && this->targetTemperature >= 207))
 			{
 				this->boilRun = true;
 			}
@@ -1132,6 +1153,11 @@ void BrewEngine::stop()
 	this->inOverTime = false;
 	this->statusText = "Idle";
 	this->currentStepName = "";	
+	this->overrideTargetTemperature = std::nullopt;
+	this->manualOverrideOutput = std::nullopt;
+	this->resetManualOutput = true; // Clear manual inputs
+	this->resetManualTemp = true; // Clear manual inputs
+
 }
 
 void BrewEngine::startStir(const json &stirConfig)
@@ -1425,33 +1451,35 @@ void BrewEngine::pidLoop(void *arg)
 
 	while (instance->run && instance->controlRun && !instance->restRun)
 	{
+		instance->outputOverrides = std::nullopt;
 		// Output is %
 		int outputPercent = (int)pid.getOutput((double)instance->temperature, (double)instance->targetTemperature);
-		instance->pidOutput = outputPercent;
+		instance->pidOrigOutput = outputPercent; // We keep the original PID valu in this variable and pidOutput shows the actual output
 		ESP_LOGD(TAG, "Pid Output: %d Target: %f", instance->pidOutput, instance->targetTemperature);
 
 		// Manual override and boost
-		if (instance->manualOverrideOutput.has_value())
-		{
-			// Here we don't override the pidOutput display since we want the user to see the pid values even when overriding
-			outputPercent = instance->manualOverrideOutput.value();
-		}
-		else if (instance->boostStatus == Boost)
+		if (instance->boostStatus == Boost)
 		{
 			outputPercent = 100;
-			instance->pidOutput = 100;
+			instance->outputOverrides = 100;
 		}
 		else if (instance->heaterLimit < outputPercent)
 		{
 			outputPercent = instance->heaterLimit;
-			instance->pidOutput = instance->heaterLimit;
+			instance->outputOverrides = instance->heaterLimit;
 		}
 		else if (instance->boostStatus == Rest)
 		{
 			outputPercent = 0;
-			instance->pidOutput = 0;
+			instance->outputOverrides = 0;
+		}
+		if (instance->manualOverrideOutput.has_value())
+		{
+			outputPercent = instance->manualOverrideOutput.value();
 		}
 
+		instance->pidOutput = outputPercent;
+		
 		// set all to 0
 		for (auto &heater : instance->heaters)
 		{
@@ -1569,6 +1597,8 @@ void BrewEngine::pidLoop(void *arg)
 	}
 
 	instance->pidOutput = 0;
+	instance->outputOverrides = std::nullopt;
+	instance->pidOrigOutput = 0;
 
 	vTaskDelete(NULL);
 }
@@ -1753,6 +1783,8 @@ void BrewEngine::controlLoop(void *arg)
 					instance->boostStatus = Off;
 					instance->overrideTargetTemperature = std::nullopt;
 					instance->manualOverrideOutput = std::nullopt;
+					instance->resetManualOutput = true; // Clear manual inputs
+					instance->resetManualTemp = true; // Clear manual inputs
 					instance->targetTemperature = 0;
 					instance->restRun = true;
 					instance->statusText = "Resting";
@@ -1781,6 +1813,8 @@ void BrewEngine::controlLoop(void *arg)
 				// also reset overrides on step change
 				instance->overrideTargetTemperature = std::nullopt;
 				instance->manualOverrideOutput = std::nullopt;
+				instance->resetManualOutput = true; // Clear manual inputs
+				instance->resetManualTemp = true; // Clear manual inputs
 				 
 				// When we enter into a zero length, extendable step lets have one second delay to allow triggering the notification scheduled at start timepoint
 				// Otherwise go with no delay
@@ -2026,14 +2060,15 @@ string BrewEngine::processCommand(const string &payLoad)
 			jCurrentTemp["temp"] = (double)((int)(val * 10)) / 10; // round float to 1 digit for display
 			jCurrentTemps.push_back(jCurrentTemp);
 		}
+		
 
 		resultData = {
 			{"temp", (double)((int)(this->temperature * 10)) / 10}, // round float to 1 digit for display
 			{"temps", jCurrentTemps},
 			{"targetTemp", (double)((int)(this->targetTemperature * 10)) / 10}, // round float to 1 digit for display,
-			{"manualOverrideTargetTemp", nullptr},
+//			{"manualOverrideTargetTemp", nullptr},
 			{"output", this->pidOutput},
-			{"manualOverrideOutput", nullptr},
+//			{"manualOverrideOutput", nullptr},
 			{"status", this->statusText},
 			{"stirStatus", this->stirStatusText},
 			{"lastLogDateTime", lastLogDateTime},
@@ -2041,19 +2076,22 @@ string BrewEngine::processCommand(const string &payLoad)
 			{"runningVersion", this->runningVersion},
 			{"inOverTime", this->inOverTime},
 			{"boostStatus", this->boostStatus},
-			{"powerUsage", (int)(this->powerUsage / 3600)},
+			{"powerUsage", (double)((int)(this->powerUsage / 3600)) / 1000},     // (this->powerUsage / 3600 / 1000)
 			{"currentStepName", this->currentStepName},
+			{"pidOrigOutput", this->pidOrigOutput},
+			{"outputOverrides", nullptr},
+			{"resetManualOutput", this->resetManualOutput},			
+			{"resetManualTemp", this->resetManualTemp},			
 		};
-
-		if (this->manualOverrideOutput.has_value())
+		
+		if (this->outputOverrides.has_value())
 		{
-			resultData["manualOverrideOutput"] = this->manualOverrideOutput.value();
+			resultData["outputOverrides"] = this->outputOverrides.value();
 		}
+		
+		resetManualOutput = false;
+		resetManualTemp = false;
 
-		if (this->overrideTargetTemperature.has_value())
-		{
-			resultData["manualOverrideTargetTemp"] = this->overrideTargetTemperature.value();
-		}
 	}
 	else if (command == "GetRunningSchedule")
 	{
@@ -2078,20 +2116,10 @@ string BrewEngine::processCommand(const string &payLoad)
 
 		resultData = jRunningSchedule;
 	}
-	else if (command == "SetTemp")
+	else if (command == "SetOverrideTemp")
 	{
 
-		if (data["targetTemp"].is_null())
-		{
-			this->overrideTargetTemperature = std::nullopt;
-
-			// when not in a program also direclty set targtetemp
-			if (this->selectedMashScheduleName.empty() == true)
-			{
-				this->targetTemperature = 0;
-			}
-		}
-		else if (data["targetTemp"].is_number())
+		if (data["targetTemp"].is_number())
 		{
 
 			this->overrideTargetTemperature = (float)data["targetTemp"];
@@ -2099,6 +2127,8 @@ string BrewEngine::processCommand(const string &payLoad)
 			// when not in a program also direclty set targtetemp
 			if (this->selectedMashScheduleName.empty() == true)
 			{
+				this->manualOverrideOutput = std::nullopt;
+				this->resetManualOutput = true; // Target temp and Output manual settings are mutually exclusive when not in program
 				this->targetTemperature = this->overrideTargetTemperature.value();
 			}
 		}
@@ -2106,16 +2136,30 @@ string BrewEngine::processCommand(const string &payLoad)
 		{
 			this->overrideTargetTemperature = std::nullopt;
 
-			message = "Incorrect data, integer or float expected!";
-			success = false;
+			// when not in a program also direclty set targtetemp to maintain current
+			if (this->selectedMashScheduleName.empty() == true)
+			{
+				this->targetTemperature = this->temperature;
+			}
 		}
+		// reset so effect is immidiate
+		this->resetPitTime = true;
+
 	}
 	else if (command == "SetOverrideOutput")
 	{
 
-		if (data["output"].is_null() == false && data["output"].is_number())
+		if (data["output"].is_number())
 		{
 			this->manualOverrideOutput = (int)data["output"];
+			
+			if (this->selectedMashScheduleName.empty() == true)
+			{
+				this->overrideTargetTemperature = std::nullopt;
+				this->resetManualTemp = true; // Target temp and Output manual settings are mutually exclusive when not in program
+				this->targetTemperature = this->temperature; // when not in a program also direclty set targtetemp to current. Only cosmetics
+			}
+
 		}
 		else
 		{
