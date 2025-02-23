@@ -57,7 +57,7 @@ menu "BrewEngine Config"
     
     config STIR
         int "STIR Pin"
-        default 27
+        default 25
         help
             STIR Pin
             Set to 0 to disable!
@@ -92,7 +92,7 @@ config InvertOutputs
 			
      config SPEAKER1
         int "Speaker1 Pin"
-        default 25
+        default 27
         help
             Speaker 1 Pin
 
