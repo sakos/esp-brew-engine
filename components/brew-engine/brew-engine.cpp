@@ -1262,7 +1262,9 @@ void BrewEngine::readLoop(void *arg)
 {
 	BrewEngine *instance = (BrewEngine *)arg;
 
-	int it = 0;
+	int it = 4; 	//to start with logging after 1s
+	int lastTemp = 0;
+
 
 	while (instance->run)
 	{
@@ -1363,7 +1365,6 @@ void BrewEngine::readLoop(void *arg)
 			if (it > 5)
 			{
 				it = 0;
-				int lastTemp = 0;
 
 				if (!instance->tempLog.empty())
 				{
@@ -1371,15 +1372,15 @@ void BrewEngine::readLoop(void *arg)
 					lastTemp = lastValue->second;
 				}
 
-				if (lastTemp != (int)avg)
+				if ((lastTemp != (int)(avg + 0.5)) || (instance->tempLog.empty()) )		//round
 				{
 					// decided agains chrono just make it a hell lot more complex
 					// instance->tempLog.insert(std::make_pair(std::chrono::system_clock::now(), (int)avg));
 					time_t current_raw_time = time(0);
 					// System time: number of seconds since 00:00,
-					instance->tempLog.insert(std::make_pair(current_raw_time, (int)avg));
+					instance->tempLog.insert(std::make_pair(current_raw_time, (int)(avg + 0.5)));  //round
 
-					ESP_LOGI(TAG, "Logging: %d°", (int)avg);
+					ESP_LOGI(TAG, "Logging: %d° at date: %lld", (int)(avg + 0.5) , current_raw_time);
 				}
 				else
 				{
@@ -2014,7 +2015,7 @@ string BrewEngine::processCommand(const string &payLoad)
 		json jTempLog = json::array({});
 		if (!this->tempLog.empty())
 		{
-			auto lastLog = this->tempLog.rend();
+			auto lastLog = this->tempLog.rbegin();
 			lastLogDateTime = lastLog->first;
 
 			// If we have a last date we only need to send the log increment

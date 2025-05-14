@@ -383,7 +383,7 @@ const getData = async () => {
   const requestData = {
     command: "Data",
     data: {
-      LastDate: lastGoodDataDate.value,
+      lastDate: lastGoodDataDate.value,
     },
   };
 
