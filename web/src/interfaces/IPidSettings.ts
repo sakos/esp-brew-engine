@@ -6,7 +6,6 @@ export interface IPidSettings {
   boilkI: number;
   boilkD: number;
   pidLoopTime: number;
-  stepInterval: number;
   boostModeUntil: number;
   heaterLimit: number;
   heaterCycles: number;

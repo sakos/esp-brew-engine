@@ -35,7 +35,6 @@ const tableNotificationsHeaders = ref<Array<any>>([
   { title: t("notificationEditor.name"), key: "name", align: "start" },
   { title: t("notificationEditor.time_from_start"), key: "timeFromStart", align: "start" },
   { title: t("notificationEditor.ref_step_index"), key: "refStepIndex", align: "start" },
-  { title: t("notificationEditor.time_absolute"), key: "timeAbsolute", align: "start" },
   { title: t("notificationEditor.buzzer"), key: "buzzer", align: "start" },
   { title: t("notificationEditor.actions"), key: "actions", sortable: false },
 ]);

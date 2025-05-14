@@ -282,12 +282,19 @@ void BrewEngine::readSettings()
 	this->boilkD = (double)bdint / 10;
 
 	this->pidLoopTime = this->settingsManager->Read("pidLoopTime", (uint16_t)CONFIG_PID_LOOPTIME);
-	this->stepInterval = this->settingsManager->Read("stepInterval", (uint16_t)CONFIG_PID_LOOPTIME); // we use same as pidloop time
+//	this->stepInterval = this->settingsManager->Read("stepInterval", (uint16_t)CONFIG_PID_LOOPTIME); // we use same as pidloop time
 
 	this->boostModeUntil = this->settingsManager->Read("boostModeUntil", (uint8_t)this->boostModeUntil);
 	this->heaterLimit = this->settingsManager->Read("heaterLimit", (uint8_t)this->heaterLimit);
 	this->heaterCycles = this->settingsManager->Read("heaterCycles", (uint8_t)this->heaterCycles);
 	this->relayGuard = this->settingsManager->Read("relayGuard", (uint8_t)this->relayGuard);
+
+	uint16_t mdeltaint = this->settingsManager->Read("delta", (uint16_t)(this->mashDelta * 10));
+	uint16_t bdeltaint = this->settingsManager->Read("boildelta", (uint16_t)(this->boilDelta * 10));
+
+	this->mashDelta = (double)mdeltaint / 10;
+	this->boilDelta = (double)bdeltaint / 10;
+
 }
 
 void BrewEngine::setMashSchedule(const json &jSchedule)
@@ -380,7 +387,7 @@ void BrewEngine::savePIDSettings()
 	this->settingsManager->Write("boilkD", bdint);
 
 	this->settingsManager->Write("pidLoopTime", this->pidLoopTime);
-	this->settingsManager->Write("stepInterval", this->stepInterval);
+//	this->settingsManager->Write("stepInterval", this->stepInterval);
 
 	this->settingsManager->Write("boostModeUntil", this->boostModeUntil);
 	this->settingsManager->Write("heaterLimit", this->heaterLimit);
@@ -1507,25 +1514,7 @@ void BrewEngine::pidLoop(void *arg)
 			if (heater->watt > outputWatt)
 			{
 				heater->burnTime = (int)(((double)outputWatt / (double)heater->watt) * 100);
-				
-				if (heater->burnTime <= instance->relayGuard/2)
-				{
-					heater->burnTime=0;
-				}
-				else if (heater->burnTime <= instance->relayGuard)
-				{
-					heater->burnTime=instance->relayGuard;
-				}
-
-				if (heater->burnTime >= 100 - instance->relayGuard/2)
-				{
-					heater->burnTime=100;
-				}
-				else if (heater->burnTime >= 100 - instance->relayGuard)
-				{
-					heater->burnTime=100 - instance->relayGuard;
-				}
-				
+								
 				ESP_LOGI(TAG, "Pid Calc Heater %s: OutputWatt: %d Burn: %d", heater->name.c_str(), outputWatt, heater->burnTime);
 				break;
 			}
@@ -1542,7 +1531,7 @@ void BrewEngine::pidLoop(void *arg)
 		int heaterLoopTime = instance->pidLoopTime / instance->heaterCycles;
 		
 		// we keep going for the desired pidlooptime and set the burn by percent
-		for (int i = 0; i < instance->pidLoopTime / instance->heaterCycles; i++)
+		for (int i = 0; i < heaterLoopTime * instance->heaterCycles; i++)
 		{
 			if (!instance->run || !instance->controlRun)
 			{
@@ -1560,7 +1549,26 @@ void BrewEngine::pidLoop(void *arg)
 
 				if (heater->burnTime > 0)
 				{
-					burnUntil = ((double)heater->burnTime / 100) * (double)instance->pidLoopTime / (double)instance->heaterCycles; // convert % back to seconds (per heater cycle)
+					burnUntil = ((double)heater->burnTime / 100) * heaterLoopTime; // convert % back to seconds (per heater cycle)
+					
+					if (burnUntil <= instance->relayGuard/2)
+					{
+						burnUntil=0;
+					}
+					else if (burnUntil <= instance->relayGuard)
+					{
+						burnUntil=instance->relayGuard;
+					}
+
+					if (burnUntil >= heaterLoopTime - instance->relayGuard/2)
+					{
+						burnUntil=heaterLoopTime;
+					}
+					else if (burnUntil >= heaterLoopTime - instance->relayGuard)
+					{
+						burnUntil=heaterLoopTime - instance->relayGuard;
+					}
+
 				}
 
 				if (burnUntil > i % heaterLoopTime) // on 
@@ -1660,7 +1668,7 @@ void BrewEngine::controlLoop(void *arg)
 	bool noMoreNotification = true;
 
 	uint boostUntil;	// The Boost limit temperature
-	uint tempRate;		// The percentage of target temperature within a temp increasing step
+	//uint tempRate;		// The percentage of target temperature within a temp increasing step. Removed. We set target directly at the beginning of the step. Much more simple, better PID
 	bool noDelay;		// Do the next cycle without delay
 	
 	// Signal if target temperature has been reached
@@ -1690,22 +1698,6 @@ void BrewEngine::controlLoop(void *arg)
 		if (now < currentStep->time)
 		//Step shall continue to run
 		{
-			// calculate the elapsed time in percent. Add PID loop time as the goal temp is targeted at PID loop done
-			if ((!hold) && ((currentStep->time - prevStep->time).count() > instance->pidLoopTime) )
-			{
-				tempRate = (uint)
-				100 * ((now + seconds(instance->pidLoopTime) - prevStep->time).count()) /
-				((currentStep->time - prevStep->time).count());
-				if (tempRate > 100)
-				{
-					tempRate = 100;
-				}
-			}
-			else 
-			{
-				tempRate = 100;
-			}
-						
 			// Calculate actual target temperature. Override if needed
 			if (instance->overrideTargetTemperature.has_value())
 			{
@@ -1713,14 +1705,14 @@ void BrewEngine::controlLoop(void *arg)
 			}
 			else
 			{
-				instance->targetTemperature = prevStep->temperature + (currentStep->temperature -  prevStep->temperature) * (float) tempRate / 100;
+				instance->targetTemperature = currentStep->temperature;
 			}
 
 			// Handle boost mode
-			// There is a risk that boost will flapping or switch on with delay due to sliding target temp calculation and increase
+			
 			if (currentStep->allowBoost)
 			{
-				boostUntil = (uint)((((instance->targetTemperature - prevStep->temperature)  * (float)instance->boostModeUntil) / 100) + prevStep->temperature);
+				boostUntil = (uint)((instance->targetTemperature   * (float)instance->boostModeUntil) / 100);
 
 				if (instance->boostStatus == Off && instance->temperature < boostUntil)
 				{
@@ -2251,7 +2243,7 @@ string BrewEngine::processCommand(const string &payLoad)
 			{"boilkI", this->boilkI},
 			{"boilkD", this->boilkD},
 			{"pidLoopTime", this->pidLoopTime},
-			{"stepInterval", this->stepInterval},
+//			{"stepInterval", this->stepInterval},
 			{"boostModeUntil", this->boostModeUntil},
 			{"heaterLimit", this->heaterLimit},
 			{"heaterCycles", this->heaterCycles},
@@ -2267,7 +2259,7 @@ string BrewEngine::processCommand(const string &payLoad)
 		this->boilkI = data["boilkI"].get<double>();
 		this->boilkD = data["boilkD"].get<double>();
 		this->pidLoopTime = data["pidLoopTime"].get<uint16_t>();
-		this->stepInterval = data["stepInterval"].get<uint16_t>();
+//		this->stepInterval = data["stepInterval"].get<uint16_t>();
 		this->boostModeUntil = data["boostModeUntil"].get<uint8_t>();
 		this->heaterLimit = data["heaterLimit"].get<uint8_t>();
 		this->heaterCycles = data["heaterCycles"].get<uint8_t>();
