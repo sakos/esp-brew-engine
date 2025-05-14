@@ -24,6 +24,7 @@ private:
     double kd; // Derivative
     double max;
     double min = 0;
+    double delta;
 
     bool firstRun = true;
 
@@ -68,8 +69,27 @@ public:
         this->min = min;
     }
 
-    double getOutput(double actual, double setpoint)
+    void setMaxDelta (double delta)
     {
+        this->delta = delta;
+    }
+
+    double getOutput(double actualorig, double setpoint, double peaktemp, bool inhold)
+    {
+        double actual = actualorig;
+        if (peaktemp > setpoint)        // Increase average temp closer to highest to avoid overheat
+        {
+            double weight = 0;
+            if (delta > 0.5)            // We need a minimum band to prevent sudden jump
+            {
+                weight = std::min (((peaktemp - setpoint) / delta), 1.0);
+            }
+            
+            actual = weight * peaktemp + (1-weight) * actual;
+        }
+
+        ESP_LOGI("PID tune", "PID actual: %f Target: %f peak %f weighted: %f", actualorig, setpoint, peaktemp, actual);
+ 
         previousActual = actual;
 
         // Error
@@ -89,8 +109,16 @@ public:
                 // Integral 10
                 addToIntegral(error);
 
-                i = ki * (integral / 2); // Trapezoidal integration
-                i = clamp(i, min, max);
+                if (inhold)
+                {
+                    i = ki * (integral / 2); // Trapezoidal integration
+                    i = clamp(i, min, max);
+                }
+                else
+                {
+                    integral = 0;       // Discard integral during heat step as it causes long overshoot
+                    i = 0;
+                }
             }
 
             // Derivative
@@ -104,6 +132,8 @@ public:
         {
             cout << "p:" + to_string(p) + " i:" + to_string(i) + " d:" + to_string(d) + " output:" + to_string(output) + "\n";
         }
+
+        ESP_LOGI("PID tune", "P: %f I: %f D: %f PID: %f", p, i, d, output);
 
         output = clamp(output, min, max);
 

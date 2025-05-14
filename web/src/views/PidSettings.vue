@@ -15,11 +15,12 @@ const pidSettings = ref<IPidSettings>({
   boilkI: 0,
   boilkD: 0,
   pidLoopTime: 60,
-  stepInterval: 60,
   boostModeUntil: 85,
   heaterLimit: 100,
   heaterCycles: 1,
   relayGuard: 5,
+  delta: 0,
+  boildelta: 0,
 });
 
 const getData = async () => {
@@ -78,20 +79,6 @@ const save = async () => {
         </v-col>
       </v-row>
 
-      <v-row>
-        <v-col cols="12" md="3">
-          <v-text-field type="number" v-model.number="pidSettings.stepInterval" :label="$t('pidSettings.stepInterval')">
-            <template v-slot:append>
-              <v-tooltip :text="$t('pidSettings.stepInterval_tooltip')">
-                <template v-slot:activator="{ props }">
-                  <v-icon size="small" v-bind="props">{{ mdiHelp }}</v-icon>
-                </template>
-              </v-tooltip>
-            </template>
-          </v-text-field>
-        </v-col>
-      </v-row>
-
       <div class="text-subtitle-2 mt-4 mb-2">{{ $t('pidSettings.mash') }}</div>
 
       <v-divider :thickness="7" />
@@ -105,6 +92,9 @@ const save = async () => {
         </v-col>
         <v-col cols="12" md="3">
           <v-text-field type="number" v-model.number="pidSettings.kD" label="D" />
+        </v-col>
+        <v-col cols="12" md="3">
+          <v-text-field type="number" v-model.number="pidSettings.delta" label="Peak delta" />
         </v-col>
       </v-row>
 
@@ -121,6 +111,9 @@ const save = async () => {
         </v-col>
         <v-col cols="12" md="3">
           <v-text-field type="number" v-model.number="pidSettings.boilkD" label="D" />
+        </v-col>
+        <v-col cols="12" md="3">
+          <v-text-field type="number" v-model.number="pidSettings.boildelta" label="Peak delta" />
         </v-col>
       </v-row>
 

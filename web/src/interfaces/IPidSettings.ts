@@ -10,4 +10,6 @@ export interface IPidSettings {
   heaterLimit: number;
   heaterCycles: number;
   relayGuard: number;
+  delta: number;
+  boildelta: number;
 }

@@ -394,6 +394,13 @@ void BrewEngine::savePIDSettings()
 	this->settingsManager->Write("heaterCycles", this->heaterCycles);
 	this->settingsManager->Write("relayGuard", this->relayGuard);
 
+	uint16_t mdeltaint = static_cast<uint16_t>(this->mashDelta * 10);
+	uint16_t bdeltaint = static_cast<uint16_t>(this->boilDelta * 10);
+
+	this->settingsManager->Write("delta", mdeltaint);
+	this->settingsManager->Write("boildelta", bdeltaint);
+
+
 	ESP_LOGI(TAG, "Saving PID Settings Done");
 }
 
@@ -1285,6 +1292,7 @@ void BrewEngine::readLoop(void *arg)
 
 		int nrOfSensors = 0;
 		float sum = 0.0;
+		float peak = 0.0;
 
 		for (auto &[key, sensor] : instance->sensors)
 		{
@@ -1342,6 +1350,10 @@ void BrewEngine::readLoop(void *arg)
 			{
 				sum += temperature;
 				nrOfSensors++;
+				if (temperature > peak)
+				{
+					peak = temperature;
+				}
 			}
 
 			sensor->lastTemp = temperature;
@@ -1362,6 +1374,7 @@ void BrewEngine::readLoop(void *arg)
 		ESP_LOGD(TAG, "Avg Temperature: %.2f°", avg);
 
 		instance->temperature = avg;
+		instance->peakTemperature = peak;
 
 		// when controlrun is true we need to keep out data
 		if (instance->controlRun)
@@ -1417,23 +1430,26 @@ void BrewEngine::pidLoop(void *arg)
 {
 	BrewEngine *instance = (BrewEngine *)arg;
 
-	double kP, kI, kD;
+	double kP, kI, kD, delta;
 	if (instance->boilRun)
 	{
 		kP = instance->boilkP;
 		kI = instance->boilkI;
 		kD = instance->boilkD;
+		delta = instance->boilDelta;
 	}
 	else
 	{
 		kP = instance->mashkP;
 		kI = instance->mashkI;
 		kD = instance->mashkD;
+		delta = instance->mashDelta;
 	}
 
 	PIDController pid(kP, kI, kD);
 	pid.setMin(0);
 	pid.setMax(100);
+	pid.setMaxDelta(delta);
 	pid.debug = false;
 
 	uint totalWattage = 0;
@@ -1461,7 +1477,7 @@ void BrewEngine::pidLoop(void *arg)
 	{
 		instance->outputOverrides = std::nullopt;
 		// Output is %
-		int outputPercent = (int)pid.getOutput((double)instance->temperature, (double)instance->targetTemperature);
+		int outputPercent = (int)pid.getOutput((double)instance->temperature, (double)instance->targetTemperature, (double)instance->peakTemperature, instance->hold);
 		instance->pidOrigOutput = outputPercent; // We keep the original PID valu in this variable and pidOutput shows the actual output
 		ESP_LOGD(TAG, "Pid Output: %d Target: %f", instance->pidOutput, instance->targetTemperature);
 
@@ -1659,10 +1675,10 @@ void BrewEngine::controlLoop(void *arg)
 {
 	BrewEngine *instance = (BrewEngine *)arg;
 
-	// the pid needs to reset one step later so the next temp is set, oherwise it has a delay
+	// the pid needs to reset one step later so the next temp is set, otherwise it has a delay
 	bool resetPIDNextStep = false;
 	// Mark hold steps with flag to simplify calculations
-	bool hold = true;
+	instance->hold = true;
 	//Indicates that the program / notifications is done, however remaining notifications may present
 	bool noMoreStep = false;
 	bool noMoreNotification = true;
@@ -1793,7 +1809,7 @@ void BrewEngine::controlLoop(void *arg)
 				prevStep = currentStep;
 				currentStep = instance->executionSteps.at(instance->currentMashStep);
 				
-				hold = (currentStep->temperature == prevStep->temperature);
+				instance->hold = (currentStep->temperature == prevStep->temperature);
 				
 				instance->targetTemperature = currentStep->temperature;
 				// Target temp would be recalculated in next cycle, we need a PID reset after
@@ -1814,7 +1830,7 @@ void BrewEngine::controlLoop(void *arg)
 				noDelay = ((currentStep->time > prevStep->time) || !currentStep->extendIfNeeded);
 				
 				// Update step name
-				if (hold) 
+				if (instance->hold) 
 				{
 					instance->currentStepName = currentStep->stepName + " - hold"; 
 				}
@@ -2248,6 +2264,8 @@ string BrewEngine::processCommand(const string &payLoad)
 			{"heaterLimit", this->heaterLimit},
 			{"heaterCycles", this->heaterCycles},
 			{"relayGuard", this->relayGuard},
+			{"delta", this->mashDelta},
+			{"boildelta", this->boilDelta},
 		};
 	}
 	else if (command == "SavePIDSettings")
@@ -2264,6 +2282,8 @@ string BrewEngine::processCommand(const string &payLoad)
 		this->heaterLimit = data["heaterLimit"].get<uint8_t>();
 		this->heaterCycles = data["heaterCycles"].get<uint8_t>();
 		this->relayGuard = data["relayGuard"].get<uint8_t>();
+		this->mashDelta = data["delta"].get<double>();
+		this->boilDelta = data["boildelta"].get<double>();
 		this->savePIDSettings();
 	}
 	else if (command == "GetTempSettings")
