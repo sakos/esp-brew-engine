@@ -71,8 +71,8 @@
     "heater_limit_tooltip": "Limits PID controlled heater power at this %. Boost overrides this limit",
     "heater_cycles": "Heater cycles",
     "heater_cycles_tooltip": "Number of heater cycles during a PID cycle. \nThe more, shorter heater cycles the less fluctuaion of heater element temperature, however the more frequent relay switches",
-    "relay_guard": "Relay guard time (%)",
-    "relay_guard_tooltip": "Minimum On/Off state time for relays to avoid useless short glitches. (% of heater cycle time)",
+    "relay_guard": "Relay guard time (s)",
+    "relay_guard_tooltip": "Minimum On/Off state time for relays to avoid useless short glitches, in seconds",
     "boost_rest": "Boost Rest (sec)"
   },
   "heaterSettings": {
