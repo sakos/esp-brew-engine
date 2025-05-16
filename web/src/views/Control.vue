@@ -39,6 +39,8 @@ const pidOrigOutput = ref<number>();
 const outputOverrides = ref<number>();
 const resetManualOutput = ref<boolean>();
 const resetManualTemp = ref<boolean>();
+const currentScheduleName = ref<string>();
+
 
 const intervalId = ref<any>();
 
@@ -407,6 +409,9 @@ const getData = async () => {
   outputOverrides.value = apiResult.data.outputOverrides;
   resetManualOutput.value = apiResult.data.resetManualOutput;
   resetManualTemp.value = apiResult.data.resetManualTemp;
+  if (status.value !== 'Idle') {
+	selectedMashSchedule.value = apiResult.data.currentScheduleName;
+  }
 
   if (resetManualOutput.value) {
 	manualOverrideOutput.value = null;

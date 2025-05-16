@@ -2133,6 +2133,7 @@ string BrewEngine::processCommand(const string &payLoad)
 			{"outputOverrides", nullptr},
 			{"resetManualOutput", this->resetManualOutput},			
 			{"resetManualTemp", this->resetManualTemp},			
+			{"currentScheduleName", this->selectedMashScheduleName},
 		};
 		
 		if (this->outputOverrides.has_value())
