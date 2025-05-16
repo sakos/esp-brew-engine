@@ -81,7 +81,7 @@ void BrewEngine::Init()
 
 	this->readTempSensorSettings();
 
-	this->initOneWire();
+	// this->initOneWire();
 
 	this->detectOnewireTemperatureSensors();
 
@@ -841,7 +841,7 @@ void BrewEngine::initMqtt()
 	ESP_LOGI(TAG, "initMqtt: Done");
 }
 
-void BrewEngine::initOneWire()
+/*void BrewEngine::initOneWire()
 {
 	ESP_LOGI(TAG, "initOneWire: Start");
 
@@ -855,7 +855,7 @@ void BrewEngine::initOneWire()
 	ESP_LOGI(TAG, "1-Wire bus installed on GPIO%d", this->oneWire_PIN);
 
 	ESP_LOGI(TAG, "initOneWire: Done");
-}
+}*/
 
 void BrewEngine::detectOnewireTemperatureSensors()
 {
@@ -864,6 +864,27 @@ void BrewEngine::detectOnewireTemperatureSensors()
 	this->skipTempLoop = true;
 	vTaskDelay(pdMS_TO_TICKS(2000));
 
+	ESP_LOGI(TAG, "initOneWire: Start");		//Do onewire init as well every time. 
+
+	// Safely release existing bus before reinitialization
+	if (this->obh != nullptr) 
+	{
+		ESP_LOGI(TAG, "initOneWire: Release first");		//Do onewire init as well every time. 
+		ESP_ERROR_CHECK(onewire_bus_del(this->obh));  // Releases RMT channels & bus resources [1]
+		this->obh = nullptr;  // Prevent dangling pointer
+	}
+	
+	onewire_bus_config_t bus_config;
+	bus_config.bus_gpio_num = this->oneWire_PIN;
+
+	onewire_bus_rmt_config_t rmt_config;
+	rmt_config.max_rx_bytes = 10; // 1byte ROM command + 8byte ROM number + 1byte device command
+
+	ESP_ERROR_CHECK(onewire_new_bus_rmt(&bus_config, &rmt_config, &this->obh));
+	ESP_LOGI(TAG, "1-Wire bus installed on GPIO%d", this->oneWire_PIN);
+
+	ESP_LOGI(TAG, "initOneWire: Done");
+
 	// sensors are already loaded via json settings, but we need to add handles and status
 	onewire_device_iter_handle_t iter = NULL;
 	esp_err_t search_result = ESP_OK;
@@ -871,6 +892,11 @@ void BrewEngine::detectOnewireTemperatureSensors()
 	// create 1-wire device iterator, which is used for device search
 	ESP_ERROR_CHECK(onewire_new_device_iter(this->obh, &iter));
 	ESP_LOGI(TAG, "Device iterator created, start searching...");
+	
+	for (auto &[key, sensor] : this->sensors)			// Disconnect all existing sensors
+	{
+		sensor->handle = NULL;
+	}
 
 	int i = 0;
 	do
@@ -1278,7 +1304,8 @@ void BrewEngine::readLoop(void *arg)
 
 	int it = 4; 	//to start with logging after 1s
 	int lastTemp = 0;
-
+	bool needed = false;
+	bool working = false;
 
 	while (instance->run)
 	{
@@ -1293,6 +1320,8 @@ void BrewEngine::readLoop(void *arg)
 		int nrOfSensors = 0;
 		float sum = 0.0;
 		float peak = 0.0;
+		needed = false;			// Onewire failure can happen only if there is at least one sensor configured
+		working = false;		
 
 		for (auto &[key, sensor] : instance->sensors)
 		{
@@ -1300,17 +1329,20 @@ void BrewEngine::readLoop(void *arg)
 			ds18b20_device_handle_t handle = sensor->handle;
 			string stringId = std::to_string(key);
 
-			// not useForControl or connected, continue
-			if (!sensor->handle || !sensor->connected)
+			// not useForControl, continue
+			if (!sensor->handle)
 			{
+				ESP_LOGD(TAG, "Not present at onewire init [%s], skip", stringId.c_str());
 				continue;
 			}
-
+			
+			needed = true;	// This sensor was detected and should work
+			
 			esp_err_t err = ds18b20_trigger_temperature_conversion(handle);
 
 			if (err != ESP_OK)
 			{
-				ESP_LOGW(TAG, "Error Reading from [%s], disabling sensor!", stringId.c_str());
+				ESP_LOGW(TAG, "Error Reading from [%s], skipping sensor!", stringId.c_str());
 				sensor->connected = false;
 				sensor->lastTemp = 0;
 				instance->currentTemperatures.erase(key);
@@ -1321,12 +1353,17 @@ void BrewEngine::readLoop(void *arg)
 
 			if (err != ESP_OK)
 			{
-				ESP_LOGW(TAG, "Error Reading from [%s], disabling sensor!", stringId.c_str());
+				ESP_LOGW(TAG, "Error Reading temp from [%s], skipping sensor!", stringId.c_str());
 				sensor->connected = false;
 				sensor->lastTemp = 0;
 				instance->currentTemperatures.erase(key);
 				continue;
 			};
+			
+			sensor->connected = true; 	// sensor is present or back
+			working = true; 		// At least one detected sensor is working
+			
+
 
 			// conversion needed
 			if (instance->temperatureScale == Fahrenheit)
@@ -1421,8 +1458,13 @@ void BrewEngine::readLoop(void *arg)
 				esp_mqtt_client_publish(instance->mqttClient, instance->mqttTopic.c_str(), payload.c_str(), 0, 1, 1);
 			}
 		}
+		if (needed && !working)
+		{
+			ESP_LOGI(TAG, "All detected sensors are lost, reinit onewire");
+			instance->detectOnewireTemperatureSensors();
+			vTaskDelay(pdMS_TO_TICKS(1000));
+		}
 	}
-
 	vTaskDelete(NULL);
 }
 

@@ -230,7 +230,7 @@ private:
     system_clock::time_point stirStartCycle;
 
     // one wire
-    onewire_bus_handle_t obh;
+    onewire_bus_handle_t obh = nullptr;
     std::map<uint64_t, TemperatureSensor *> sensors; // map with sensor id and handle
 
 public:
