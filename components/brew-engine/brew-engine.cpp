@@ -286,7 +286,7 @@ void BrewEngine::readSettings()
 
 	this->boostModeUntil = this->settingsManager->Read("boostModeUntil", (uint8_t)this->boostModeUntil);
 	this->heaterLimit = this->settingsManager->Read("heaterLimit", (uint8_t)this->heaterLimit);
-	this->heaterCycles = this->settingsManager->Read("heaterCycles", (uint8_t)this->heaterCycles);
+//	this->heaterCycles = this->settingsManager->Read("heaterCycles", (uint8_t)this->heaterCycles);
 	this->relayGuard = this->settingsManager->Read("relayGuard", (uint8_t)this->relayGuard);
 
 	uint16_t mdeltaint = this->settingsManager->Read("delta", (uint16_t)(this->mashDelta * 10));
@@ -387,11 +387,9 @@ void BrewEngine::savePIDSettings()
 	this->settingsManager->Write("boilkD", bdint);
 
 	this->settingsManager->Write("pidLoopTime", this->pidLoopTime);
-//	this->settingsManager->Write("stepInterval", this->stepInterval);
 
 	this->settingsManager->Write("boostModeUntil", this->boostModeUntil);
 	this->settingsManager->Write("heaterLimit", this->heaterLimit);
-	this->settingsManager->Write("heaterCycles", this->heaterCycles);
 	this->settingsManager->Write("relayGuard", this->relayGuard);
 
 	uint16_t mdeltaint = static_cast<uint16_t>(this->mashDelta * 10);
@@ -1585,11 +1583,9 @@ void BrewEngine::pidLoop(void *arg)
 			}
 		}
 
-		// Shorter heater cycles for even temperature and prevent hot spots
-		int heaterLoopTime = instance->pidLoopTime / instance->heaterCycles;
 		
 		// we keep going for the desired pidlooptime and set the burn by percent
-		for (int i = 0; i < heaterLoopTime * instance->heaterCycles; i++)
+		for (int i = 0; i < instance->pidLoopTime; i++)
 		{
 			if (!instance->run || !instance->controlRun)
 			{
@@ -1607,7 +1603,7 @@ void BrewEngine::pidLoop(void *arg)
 
 				if (heater->burnTime > 0)
 				{
-					burnUntil = ((double)heater->burnTime / 100) * heaterLoopTime; // convert % back to seconds (per heater cycle)
+					burnUntil = ((double)heater->burnTime / 100) * instance->pidLoopTime; // convert % back to seconds (per heater cycle) TODO minus epsilon
 					
 					if (burnUntil <= instance->relayGuard/2)
 					{
@@ -1618,18 +1614,18 @@ void BrewEngine::pidLoop(void *arg)
 						burnUntil=instance->relayGuard;
 					}
 
-					if (burnUntil >= heaterLoopTime - instance->relayGuard/2)
+					if (burnUntil >= instance->pidLoopTime - instance->relayGuard/2)
 					{
-						burnUntil=heaterLoopTime;
+						burnUntil=instance->pidLoopTime;
 					}
-					else if (burnUntil >= heaterLoopTime - instance->relayGuard)
+					else if (burnUntil >= instance->pidLoopTime - instance->relayGuard)
 					{
-						burnUntil=heaterLoopTime - instance->relayGuard;
+						burnUntil=instance->pidLoopTime - instance->relayGuard;
 					}
 
 				}
 
-				if (burnUntil > i % heaterLoopTime) // on 
+				if (burnUntil > i ) // on 
 				{
 					if (heater->burn != true) // only when not current, we don't want to spam the logs
 					{
@@ -2302,10 +2298,8 @@ string BrewEngine::processCommand(const string &payLoad)
 			{"boilkI", this->boilkI},
 			{"boilkD", this->boilkD},
 			{"pidLoopTime", this->pidLoopTime},
-//			{"stepInterval", this->stepInterval},
 			{"boostModeUntil", this->boostModeUntil},
 			{"heaterLimit", this->heaterLimit},
-			{"heaterCycles", this->heaterCycles},
 			{"relayGuard", this->relayGuard},
 			{"delta", this->mashDelta},
 			{"boildelta", this->boilDelta},
@@ -2320,10 +2314,8 @@ string BrewEngine::processCommand(const string &payLoad)
 		this->boilkI = data["boilkI"].get<double>();
 		this->boilkD = data["boilkD"].get<double>();
 		this->pidLoopTime = data["pidLoopTime"].get<uint16_t>();
-//		this->stepInterval = data["stepInterval"].get<uint16_t>();
 		this->boostModeUntil = data["boostModeUntil"].get<uint8_t>();
 		this->heaterLimit = data["heaterLimit"].get<uint8_t>();
-		this->heaterCycles = data["heaterCycles"].get<uint8_t>();
 		this->relayGuard = data["relayGuard"].get<uint8_t>();
 		this->mashDelta = data["delta"].get<double>();
 		this->boilDelta = data["boildelta"].get<double>();

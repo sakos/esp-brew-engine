@@ -58,8 +58,8 @@
     "test_message": "Hi this is a test message"
   },
   "pidSettings": {
-    "pidLoopTime": "PID Loop Time",
-    "pidLoopTime_tooltip": "The time in seconds between PID calculations, since water heating is a slow process this also works best when slow ex. 60sec",
+    "pidLoopTime": "Control Loop Time",
+    "pidLoopTime_tooltip": "The time in seconds of the PID calculations and relay control loop. Since water heating is a slow process this also works best when slow ex. 60sec",
     "stepInterval": "Steps every x seconds",
     "stepInterval_tooltip": "The time between steps less means more substeps will be added",
     "mash": "Mash",
@@ -69,8 +69,6 @@
     "boost_until_tooltip": "Ignore PID until this % is reached, then wait for temp drop and restart PID.\nBoost must also be set at schedule step\nSet to 0 to disable)",
     "heater_limit": "Heater limit (%)",
     "heater_limit_tooltip": "Limits PID controlled heater power at this %. Boost overrides this limit",
-    "heater_cycles": "Heater cycles",
-    "heater_cycles_tooltip": "Number of heater cycles during a PID cycle. \nThe more, shorter heater cycles the less fluctuaion of heater element temperature, however the more frequent relay switches",
     "relay_guard": "Relay guard time (s)",
     "relay_guard_tooltip": "Minimum On/Off state time for relays to avoid useless short glitches, in seconds",
     "boost_rest": "Boost Rest (sec)"

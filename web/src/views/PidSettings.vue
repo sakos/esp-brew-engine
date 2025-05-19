@@ -17,7 +17,6 @@ const pidSettings = ref<IPidSettings>({
   pidLoopTime: 60,
   boostModeUntil: 85,
   heaterLimit: 100,
-  heaterCycles: 1,
   relayGuard: 5,
   delta: 0,
   boildelta: 0,
@@ -138,20 +137,6 @@ const save = async () => {
           <v-text-field type="number" v-model.number="pidSettings.heaterLimit" :label="$t('pidSettings.heater_limit')" :min="25" :max="100">
             <template v-slot:append>
               <v-tooltip :text="$t('pidSettings.heater_limit_tooltip')">
-                <template v-slot:activator="{ props }">
-                  <v-icon size="small" v-bind="props">{{ mdiHelp }}</v-icon>
-                </template>
-              </v-tooltip>
-            </template>
-            </v-text-field>
-        </v-col>
-      </v-row>
-
-      <v-row class="mt-4 mb-2">
-        <v-col cols="12" md="3">
-          <v-text-field type="number" v-model.number="pidSettings.heaterCycles" :label="$t('pidSettings.heater_cycles')" :min="1" :max="10">
-            <template v-slot:append>
-              <v-tooltip :text="$t('pidSettings.heater_cycles_tooltip')">
                 <template v-slot:activator="{ props }">
                   <v-icon size="small" v-bind="props">{{ mdiHelp }}</v-icon>
                 </template>

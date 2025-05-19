@@ -155,7 +155,6 @@ private:
 
     uint8_t boostModeUntil = 85;
 	uint8_t heaterLimit = 100;
-	uint8_t heaterCycles = 1;
 	uint8_t relayGuard = 3;
 	
 
