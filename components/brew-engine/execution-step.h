@@ -13,9 +13,9 @@ class ExecutionStep
 public:
     system_clock::time_point time;
     float temperature;
-    bool extendIfNeeded;
     bool allowBoost;
 	string stepName;
+	bool hold;
 
     json to_json()
     {
@@ -24,7 +24,6 @@ public:
         json jStep;
         jStep["temperature"] = this->temperature;
         jStep["time"] = seconds;
-        jStep["extendIfNeeded"] = this->extendIfNeeded;
         jStep["allowBoost"] = this->allowBoost;
         jStep["stepName"] = this->stepName;
 

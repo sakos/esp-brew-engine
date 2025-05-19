@@ -413,7 +413,6 @@ void BrewEngine::addDefaultMash()
 	defaultMash_s1->name = "Beta Amylase";
 	defaultMash_s1->temperature = (this->temperatureScale == Celsius) ? 64 : 150;
 	defaultMash_s1->stepTime = 5;
-	defaultMash_s1->extendStepTimeIfNeeded = true;
 	defaultMash_s1->allowBoost = true;
 	defaultMash_s1->time = 45;
 	defaultMash->steps.push_back(defaultMash_s1);
@@ -423,7 +422,6 @@ void BrewEngine::addDefaultMash()
 	defaultMash_s2->name = "Alpha Amylase";
 	defaultMash_s2->temperature = (this->temperatureScale == Celsius) ? 72 : 160;
 	defaultMash_s2->stepTime = 5;
-	defaultMash_s2->extendStepTimeIfNeeded = true;
 	defaultMash_s2->allowBoost = false;
 	defaultMash_s2->time = 20;
 	defaultMash->steps.push_back(defaultMash_s2);
@@ -433,7 +431,6 @@ void BrewEngine::addDefaultMash()
 	defaultMash_s3->name = "Mash Out";
 	defaultMash_s3->temperature = (this->temperatureScale == Celsius) ? 78 : 170;
 	defaultMash_s3->stepTime = 5;
-	defaultMash_s3->extendStepTimeIfNeeded = true;
 	defaultMash_s3->allowBoost = false;
 	defaultMash_s3->time = 5;
 	defaultMash->steps.push_back(defaultMash_s3);
@@ -465,7 +462,6 @@ void BrewEngine::addDefaultMash()
 	ryeMash_s1->name = "Beta Glucanase";
 	ryeMash_s1->temperature = (this->temperatureScale == Celsius) ? 43 : 110;
 	ryeMash_s1->stepTime = 5;
-	ryeMash_s1->extendStepTimeIfNeeded = true;
 	ryeMash_s1->allowBoost = true;
 	ryeMash_s1->time = 20;
 	ryeMash->steps.push_back(ryeMash_s1);
@@ -475,7 +471,6 @@ void BrewEngine::addDefaultMash()
 	ryeMash_s2->name = "Beta Amylase";
 	ryeMash_s2->temperature = (this->temperatureScale == Celsius) ? 64 : 150;
 	ryeMash_s2->stepTime = 5;
-	ryeMash_s2->extendStepTimeIfNeeded = true;
 	ryeMash_s2->allowBoost = false;
 	ryeMash_s2->time = 45;
 	ryeMash->steps.push_back(ryeMash_s2);
@@ -485,7 +480,6 @@ void BrewEngine::addDefaultMash()
 	ryeMash_s3->name = "Alpha Amylase";
 	ryeMash_s3->temperature = (this->temperatureScale == Celsius) ? 72 : 160;
 	ryeMash_s3->stepTime = 5;
-	ryeMash_s3->extendStepTimeIfNeeded = true;
 	ryeMash_s3->allowBoost = false;
 	ryeMash_s3->time = 20;
 	ryeMash->steps.push_back(ryeMash_s3);
@@ -495,7 +489,6 @@ void BrewEngine::addDefaultMash()
 	ryeMash_s4->name = "Mash Out";
 	ryeMash_s4->temperature = (this->temperatureScale == Celsius) ? 78 : 170;
 	ryeMash_s4->stepTime = 5;
-	ryeMash_s4->extendStepTimeIfNeeded = true;
 	ryeMash_s4->allowBoost = false;
 	ryeMash_s4->time = 5;
 	ryeMash->steps.push_back(ryeMash_s4);
@@ -526,8 +519,7 @@ void BrewEngine::addDefaultMash()
 	boil_s1->index = 0;
 	boil_s1->name = "Boil";
 	boil_s1->temperature = (this->temperatureScale == Celsius) ? 101 : 214;
-	boil_s1->stepTime = 0;
-	boil_s1->extendStepTimeIfNeeded = true;
+	boil_s1->stepTime = 15;
 	boil_s1->time = 70;
 	boil->steps.push_back(boil_s1);
 
@@ -1074,8 +1066,8 @@ void BrewEngine::loadSchedule()
 	fakeStep->time = SchedStartTime;
 	fakeStep->temperature = this->temperature;
 	fakeStep->allowBoost = false;
-	fakeStep->extendIfNeeded = false;
 	fakeStep->stepName = "Starting...";
+	fakeStep->hold = true;
 
 	this->executionSteps.insert(std::make_pair(stepIndex, fakeStep));
 	
@@ -1087,6 +1079,10 @@ void BrewEngine::loadSchedule()
 	for (auto const &step : schedule->steps)
 	{
 		// a step is actualy  2 different executions, 1 step time that change temp and one that holds it
+		if (step->stepTime < 1)
+		{
+			step->stepTime = 1;
+		}
 		auto stepEndTime = prevTime + minutes(step->stepTime);		
 
 		// insert the next step
@@ -1094,28 +1090,32 @@ void BrewEngine::loadSchedule()
 		execStep->time = stepEndTime;
 		execStep->temperature = (float)step->temperature;
 		execStep->allowBoost = step->allowBoost;
-		execStep->extendIfNeeded = step->extendStepTimeIfNeeded;
-		execStep->stepName = step->name;
+		execStep->stepName = step->name + " ramp";
+		execStep->hold = false;
 		
 
 		this->executionSteps.insert(std::make_pair(stepIndex, execStep));
 
 		string iso_string = this->to_iso_8601(stepEndTime);
-		ESP_LOGI(TAG, "Step endtime:%s, Temp:%f Extend:%d", iso_string.c_str(), (float)step->temperature, step->extendStepTimeIfNeeded);
+		ESP_LOGI(TAG, "Step endtime:%s, Temp:%f ", iso_string.c_str(), (float)step->temperature);
 
 		prevTime = stepEndTime;
 		stepIndex++;
 	
 
 		// insert next hold time
+		if (step->time < 1)
+		{
+			step->time = 1;
+		}
 		auto holdEndTime = prevTime + minutes(step->time);
 
 		auto holdStep = new ExecutionStep();
 		holdStep->time = holdEndTime;
 		holdStep->temperature = (float)step->temperature;
 		holdStep->allowBoost = false;
-		holdStep->extendIfNeeded = false;
-		holdStep->stepName = step->name;
+		holdStep->stepName = step->name + " ramp";
+		holdStep->hold = true;
 
 
 		this->executionSteps.insert(std::make_pair(stepIndex, holdStep));
@@ -1785,7 +1785,7 @@ void BrewEngine::controlLoop(void *arg)
 				}
 			}
 			// Special handling if extendable step is close to finish
-			if (currentStep->extendIfNeeded && !instance->inOverTime)
+			if (currentStep->hold && !instance->inOverTime)
 			{
 				if ((now > (currentStep->time - seconds(instance->overTimeTrigger))) && !targetReached)		// End of extendable step within 5 seconds and target is not reached
 				{
@@ -1809,7 +1809,7 @@ void BrewEngine::controlLoop(void *arg)
 		}
 		
 		// Scheduled endtime or target temp in overtime reached
-		else if ((!currentStep->extendIfNeeded) || targetReached)
+		else if (!currentStep->hold || targetReached)
 		//Start next step
 		{
 			// Exit from overtime and update web to re-enable pending notification
@@ -1865,7 +1865,8 @@ void BrewEngine::controlLoop(void *arg)
 				 
 				// When we enter into a zero length, extendable step lets have one second delay to allow triggering the notification scheduled at start timepoint
 				// Otherwise go with no delay
-				noDelay = ((currentStep->time > prevStep->time) || !currentStep->extendIfNeeded);
+				// TODO: zero length is not possible anymore
+				noDelay = true;
 				
 				// Update step name
 				if (instance->hold) 

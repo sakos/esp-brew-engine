@@ -4,6 +4,7 @@ import { useAppStore } from "@/store/app";
 import { mdiDelete, mdiPencil } from "@mdi/js";
 import { ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+
 const { t } = useI18n({ useScope: "global" });
 
 const appStore = useAppStore();
@@ -39,7 +40,6 @@ const tableStepsHeaders = ref<Array<any>>([
   { title: t("stepEditor.name"), key: "name", align: "start" },
   { title: `${t("stepEditor.temperature")} ${appStore.tempUnit}`, key: "temperature", align: "end" },
   { title: t("stepEditor.step_time"), key: "stepTime", align: "end" },
-  { title: t("stepEditor.extend_step_time"), key: "extendStepTimeIfNeeded", align: "end" },
   { title: t("stepEditor.allow_boost"), key: "allowBoost", align: "end" },
   { title: t("stepEditor.hold_time"), key: "time", align: "end" },
   { title: t("stepEditor.actions"), key: "actions", sortable: false },
@@ -87,6 +87,14 @@ const stepDeleteItemOk = async () => {
 
   closeDeleteDialog();
 };
+
+const stepTimeRules = [
+  (v: number | null | undefined) =>
+    v !== null && v !== undefined || t("Step time is required"),
+  (v: number) =>
+    v > 0 || t("Step time must be greater than zero")
+];
+
 </script>
 
 <template>
@@ -121,16 +129,13 @@ const stepDeleteItemOk = async () => {
                   <v-text-field type="number" v-model.number="editingStep.temperature" :label="`${t('stepEditor.temperature')} ${appStore.tempUnit}`" />
                 </v-row>
                 <v-row>
-                  <v-text-field type="number" v-model.number="editingStep.stepTime" :label='t("stepEditor.step_time")' />
+                  <v-text-field type="number" v-model.number="editingStep.stepTime" :label='t("stepEditor.step_time")' :rules="stepTimeRules" :min="1" required />
                 </v-row>
                 <v-row>
-                  <v-checkbox v-model="editingStep.extendStepTimeIfNeeded" :label='t("stepEditor.extend_step_time")' />
-                </v-row>     
-               <v-row>
                   <v-checkbox v-model="editingStep.allowBoost" :label='t("stepEditor.allow_boost")' />
                 </v-row>
                 <v-row>
-                  <v-text-field type="number" v-model.number="editingStep.time" :label='t("stepEditor.hold_time")' />
+                  <v-text-field type="number" v-model.number="editingStep.time" :label='t("stepEditor.hold_time")' :rules="stepTimeRules" :min="1" required />
                 </v-row>
               </v-container>
             </v-card-text>
@@ -159,9 +164,6 @@ const stepDeleteItemOk = async () => {
     <template v-slot:[`item.actions`]="{ item }">
       <v-icon size="small" class="me-2" @click="editStep(item)" :icon="mdiPencil" />
       <v-icon size="small" @click="openStepsDeleteDialog(item)" :icon="mdiDelete" />
-    </template>
-    <template v-slot:[`item.extendStepTimeIfNeeded`]="{ item }">
-      <v-checkbox-btn class="align-right justify-center" v-model="item.extendStepTimeIfNeeded" disabled />
     </template>
     <template v-slot:[`item.allowBoost`]="{ item }">
       <v-checkbox-btn class="align-right justify-center" v-model="item.allowBoost" disabled />
