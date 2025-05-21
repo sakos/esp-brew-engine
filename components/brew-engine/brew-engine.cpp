@@ -1090,7 +1090,7 @@ void BrewEngine::loadSchedule()
 		execStep->time = stepEndTime;
 		execStep->temperature = (float)step->temperature;
 		execStep->allowBoost = step->allowBoost;
-		execStep->stepName = step->name + " ramp";
+		execStep->stepName = step->name + " - ramp";
 		execStep->hold = false;
 		
 
@@ -1114,7 +1114,7 @@ void BrewEngine::loadSchedule()
 		holdStep->time = holdEndTime;
 		holdStep->temperature = (float)step->temperature;
 		holdStep->allowBoost = false;
-		holdStep->stepName = step->name + " ramp";
+		holdStep->stepName = step->name + " - hold";
 		holdStep->hold = true;
 
 
@@ -1715,42 +1715,105 @@ void BrewEngine::controlLoop(void *arg)
 
 	// the pid needs to reset one step later so the next temp is set, otherwise it has a delay
 	bool resetPIDNextStep = false;
-	// Mark hold steps with flag to simplify calculations
-	instance->hold = true;
+
 	//Indicates that the program / notifications is done, however remaining notifications may present
 	bool noMoreStep = false;
 	bool noMoreNotification = true;
 
 	uint boostUntil;	// The Boost limit temperature
-	//uint tempRate;		// The percentage of target temperature within a temp increasing step. Removed. We set target directly at the beginning of the step. Much more simple, better PID
-	bool noDelay;		// Do the next cycle without delay
+	uint tempRate;		// The percentage of target temperature within a temp increasing step. 
 	
-	// Signal if target temperature has been reached
-	bool targetReached = false;
 	
 	// Clear override temp
 	// Clear override %
 
 	instance->restRun = false;
 	instance->inOverTime = false;
+	instance->hold = true;
 
 	auto currentStep = instance->executionSteps.at(instance->currentMashStep);
 	auto prevStep = currentStep;
 	instance->targetTemperature = instance->temperature; //As a first approach. Perfect for zero legth step
-	instance->currentStepName = currentStep->stepName; 
-
+	instance->currentStepName = currentStep->stepName;
+	instance->hold = currentStep->hold;
 
 	while (instance->run && instance->controlRun)
 	{
 
 		system_clock::time_point now = std::chrono::system_clock::now();
-		// No extend step if step final target is reached or override temp is reached
-		// Target temparature was set in previous cycle, and and step temp at first run.
-		targetReached = (targetReached || (abs(instance->targetTemperature - instance->temperature) <= instance->tempMargin));
 		
+		if (now >= currentStep->time)
+		// Time elapsed, next step to be started
+		{
+			ESP_LOGI(TAG, "Step Ended");
+			instance->overrideTargetTemperature = std::nullopt;
+			instance->manualOverrideOutput = std::nullopt;
+			instance->resetManualOutput = true; // Clear manual inputs
+			instance->resetManualTemp = true; // Clear manual inputs
+			instance->boostStatus = Off; // disable boost. could be set right in next cycle. No problem, PID reset is delayed anyway.
+			resetPIDNextStep = true;	// We reset PID anyway
 
-		if (now < currentStep->time)
-		//Step shall continue to run
+
+			if (instance->inOverTime)
+			// Exit from overtime and update web to re-enable pending notification
+			{
+				instance->runningVersion++;
+				instance->inOverTime = false;
+			}
+			
+			if (instance->executionSteps.size() < (instance->currentMashStep + 2))
+			// There are no more steps
+			// Indicate stop
+			// Rest
+			{	
+				if (!noMoreStep)
+				{
+					noMoreStep = true;
+					instance->targetTemperature = 0;
+					instance->restRun = true;
+					instance->statusText = "Resting";
+					instance->resetPitTime = true;
+					instance->currentStepName = "";
+					ESP_LOGI(TAG, "No more step");
+				}	
+			}
+			else
+			// There is another step
+			{
+				instance->currentMashStep++;
+				prevStep = currentStep;
+				currentStep = instance->executionSteps.at(instance->currentMashStep);
+								
+				// Update step name
+				if (currentStep->hold) 
+				{
+					instance->currentStepName = currentStep->stepName; 
+					instance->targetTemperature = currentStep->temperature;  //
+					instance->hold = true;
+				}
+				else
+				{
+					instance->currentStepName = currentStep->stepName;;
+					// Target temperature will be calculated in next cycle 1s delay.
+					instance->hold = false; 
+				}
+
+				ESP_LOGI(TAG, "Next step started");
+			}
+		}
+		else if (!currentStep->hold && now >= currentStep->time - seconds (instance->overTimeTrigger) && now <= currentStep->time - seconds (instance->overTimeTrigger-2))
+		// Ramp is close to expiration, check if time extension is needed. No trigger if temp missed only in the very last seconds
+		{
+			ESP_LOGI(TAG, "Ramp step temp check");
+			if (abs(instance->targetTemperature - instance->temperature) > instance->tempMargin)
+			{
+				instance->inOverTime = true;
+				instance->recalculateScheduleAfterOverTime(instance->overTimeStep);	//Shift step end, remainig steps and notifications by Xs
+				ESP_LOGD(TAG, "Extend step");
+			}
+		}
+		else
+		// Middle in the step
 		{
 			// Calculate actual target temperature. Override if needed
 			if (instance->overrideTargetTemperature.has_value())
@@ -1759,14 +1822,30 @@ void BrewEngine::controlLoop(void *arg)
 			}
 			else
 			{
-				instance->targetTemperature = currentStep->temperature;
+				if (currentStep->hold)
+				// In hold the temp is fixed
+				{
+					instance->targetTemperature = currentStep->temperature;
+				}
+				else
+				// In ramp we calculate the elapsed time in percent. Add PID loop time as the goal temp is targeted at PID loop done
+				{
+					tempRate = (uint)
+					100 * ((now + seconds(instance->pidLoopTime) - prevStep->time).count()) /
+					((currentStep->time - prevStep->time).count());
+					if (tempRate > 100 || instance->inOverTime)
+					{
+						tempRate = 100;
+					}
+					instance->targetTemperature = prevStep->temperature + (currentStep->temperature -  prevStep->temperature) * (float) tempRate / 100; 
+					//instance->targetTemperature = currentStep->temperature;  // Percentage is replaced with instant target
+				}
 			}
 
-			// Handle boost mode
-			
+			// Handle boost mode		
 			if (currentStep->allowBoost)
 			{
-				boostUntil = (uint)((instance->targetTemperature   * (float)instance->boostModeUntil) / 100);
+				boostUntil = (uint)(currentStep->temperature * (float)instance->boostModeUntil / 100);
 
 				if (instance->boostStatus == Off && instance->temperature < boostUntil)
 				{
@@ -1784,110 +1863,17 @@ void BrewEngine::controlLoop(void *arg)
 					resetPIDNextStep = true;
 				}
 			}
-			// Special handling if extendable step is close to finish
-			if (currentStep->hold && !instance->inOverTime)
-			{
-				if ((now > (currentStep->time - seconds(instance->overTimeTrigger))) && !targetReached)		// End of extendable step within 5 seconds and target is not reached
-				{
-					instance->inOverTime = true;						// Suspend popups that may triggered at scheduled endtime ot this step
-					ESP_LOGI(TAG, "Entering into time extension, popups disabled");
-				}
-			}
-			else
-			{
-				targetReached = false ;			// do not care until the end
-			}
 			
-			// PID reset
+			// PID reset if needed due to new ramp step or boost just started/ended
 			if (resetPIDNextStep)
 			{
 					// Reset pid
 					instance->resetPitTime = true;
 					resetPIDNextStep = false;
 			}
-			noDelay = false;
-		}
-		
-		// Scheduled endtime or target temp in overtime reached
-		else if (!currentStep->hold || targetReached)
-		//Start next step
-		{
-			// Exit from overtime and update web to re-enable pending notification
-			if (instance->inOverTime)
-			{
-				instance->runningVersion++;
-				instance->inOverTime = false;
-			}
-			
-			if (instance->executionSteps.size() < (instance->currentMashStep + 2))
-			{	
-				// There are no more steps
-				// Indicate stop
-				// Rest
-				if (!noMoreStep)
-				{
-					noMoreStep = true;
-					instance->boostStatus = Off;
-					instance->overrideTargetTemperature = std::nullopt;
-					instance->manualOverrideOutput = std::nullopt;
-					instance->resetManualOutput = true; // Clear manual inputs
-					instance->resetManualTemp = true; // Clear manual inputs
-					instance->targetTemperature = 0;
-					instance->restRun = true;
-					instance->statusText = "Resting";
-					instance->resetPitTime = true;
-					noDelay = false;
-					instance->currentStepName = "";
-					ESP_LOGI(TAG, "No more step");
-				}	
-			}
-			else
-			{
-				instance->currentMashStep++;
-				prevStep = currentStep;
-				currentStep = instance->executionSteps.at(instance->currentMashStep);
-				
-				instance->hold = (currentStep->temperature == prevStep->temperature);
-				
-				instance->targetTemperature = currentStep->temperature;
-				// Target temp would be recalculated in next cycle, we need a PID reset after
-				targetReached = false;		// To be updated in next cycle
-				resetPIDNextStep = true;   // To be reset in next cycle, beacuse actual target temp migth be changing
 
-				// disable boost. could be set right in next cycle. No problem, PID reset is delayed anyway.
-				instance->boostStatus = Off;
-				
-				// also reset overrides on step change
-				instance->overrideTargetTemperature = std::nullopt;
-				instance->manualOverrideOutput = std::nullopt;
-				instance->resetManualOutput = true; // Clear manual inputs
-				instance->resetManualTemp = true; // Clear manual inputs
-				 
-				// When we enter into a zero length, extendable step lets have one second delay to allow triggering the notification scheduled at start timepoint
-				// Otherwise go with no delay
-				// TODO: zero length is not possible anymore
-				noDelay = true;
-				
-				// Update step name
-				if (instance->hold) 
-				{
-					instance->currentStepName = currentStep->stepName + " - hold"; 
-				}
-				else
-				{
-					instance->currentStepName = currentStep->stepName;
-				}
-
-				ESP_LOGI(TAG, "Next step started");
-			}
 		}
-		else
-		// Extend step because target temp is not reached
-		{
-			instance->recalculateScheduleAfterOverTime(instance->overTimeStep);	//Shift step end, remainig steps and notifications by Xs
-			ESP_LOGD(TAG, "Extend step");
-			noDelay = true; // Process next cycle with no delay
-		}
+				
 		
 		// Send notification
 		noMoreNotification = true;			// Unless there is remaining
@@ -1920,10 +1906,8 @@ void BrewEngine::controlLoop(void *arg)
 			}
 		}
 
-		if (!noDelay)
-		{
-			vTaskDelay(pdMS_TO_TICKS(1000));
-		}
+		vTaskDelay(pdMS_TO_TICKS(1000));
+
 		if (noMoreStep && noMoreNotification)
 		{
 			// Everything is done

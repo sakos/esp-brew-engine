@@ -151,7 +151,7 @@ private:
 
     uint16_t pidLoopTime = 60; // time in seconds for a full loop,
     bool resetPitTime = false; // bool to reset pit , we do this when out target changes
-    float tempMargin = 0.5;    // we don't want to nitpick about 0.5°C, water heating is not that percise
+    float const tempMargin = 0.5;    // we don't want to nitpick about 0.5°C, water heating is not that percise
 
     uint8_t boostModeUntil = 85;
 	uint8_t heaterLimit = 100;
@@ -164,10 +164,12 @@ private:
     bool boilRun = false;      // true when a boil schedule  is running
     bool skipTempLoop = false; // When we are changing temp settings we temporarily need to skip our temp loop
     bool restRun = false;   // true when a program is completed but notifications are remaining
-    bool hold = false;   // true when a program schedule execution is in hold phase, false when it is in step.
+    bool hold = false;   // true when a program schedule execution is in hold phase, false when it is in ramp.
     BoostStatus boostStatus;   // Status of boost
 
     bool inOverTime = false; // when a step time isn't reached we go in overtime, we need this to know that we need recalcualtion
+	const uint8_t overTimeTrigger = 8; // Time in seconds before step ends to pretrigger overtime. 0 would prevent notification delay, sporadic fault with 5.
+	const uint8_t overTimeStep = 5; // Time in seconds the time added at each overtime shift.
 
     string statusText = "Idle";
     std::map<string, MashSchedule *> mashSchedules;
@@ -188,8 +190,6 @@ private:
     uint16_t stepInterval = 60;  // calcualte a substep every x seconds
     uint16_t runningVersion = 0; // we increase our version after recalc, so client can keep uptodate with planning
 	
-	const uint8_t overTimeTrigger = 8; // Time in seconds before step ends to pretrigger overtime. 0 would prevent notification delay, sporadic fault with 5.
-	const uint8_t overTimeStep = 5; // Time in seconds the time added at each overtime shift.
 	
 
     // IO
