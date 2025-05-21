@@ -1195,6 +1195,7 @@ void BrewEngine::stop()
 	this->manualOverrideOutput = std::nullopt;
 	this->resetManualOutput = true; // Clear manual inputs
 	this->resetManualTemp = true; // Clear manual inputs
+	this->targetTemperature = this->temperature;  
 
 }
 
