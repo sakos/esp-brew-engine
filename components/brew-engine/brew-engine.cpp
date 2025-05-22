@@ -213,10 +213,12 @@ void BrewEngine::calcNotificationTime()
 	for (auto const &[key, mashSchedule] : this->mashSchedules)
 	// Iterate through all mash schedules
 	{
-//		ESP_LOGI(TAG, "Schedule: %s ", mashSchedule->name.c_str());
+	//	ESP_LOGI(TAG, "Schedule: %s ", mashSchedule->name.c_str());
 		for (const auto& notification : mashSchedule->notifications)
 		// Iterate through all notifications within this mash schedule
 		{
+		//	ESP_LOGI(TAG, "Notification name: %s time %d", notification->name.c_str(), notification->timeFromStart);
+			bool reverseTime = (notification->timeFromStart < 0);
 			int sum = notification->timeFromStart;
 			for (const auto& step : mashSchedule->steps)
 			// Iterate through all mash steps within this mash schedule
@@ -227,8 +229,27 @@ void BrewEngine::calcNotificationTime()
 					sum += step->stepTime;
 					sum += step->time;
 				}
+				
+				if (reverseTime && (step->index == notification->refStepIndex))
+				{
+					sum += step->stepTime;
+					sum += step->time;
+					if (step->time < abs(notification->timeFromStart))
+					// Not allowed notification before hold starts
+					{
+						sum -= (step->time + notification->timeFromStart); 
+					}
+					reverseTime = false;		//Securing that this notification is calculated in reference to exactly one hold step. Not more not less.
+				}				
 			}
-			notification->timeAbsolute = sum;
+			if (!reverseTime)
+			{
+				notification->timeAbsolute = sum;
+			}
+			else
+			{
+				notification->timeAbsolute = 0;		//It makes visible that the notification settings is wrong, no corresponding step was found
+			}
 		}
     }
 }	
@@ -2117,6 +2138,7 @@ string BrewEngine::processCommand(const string &payLoad)
 			{"resetManualTemp", this->resetManualTemp},			
 			{"currentScheduleName", this->selectedMashScheduleName},
 		};
+		
 		
 		if (this->outputOverrides.has_value())
 		{
