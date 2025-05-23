@@ -1449,15 +1449,15 @@ void BrewEngine::readLoop(void *arg)
 					lastTemp = lastValue->second;
 				}
 
-				if ((lastTemp != (int)(avg + 0.5)) || (instance->tempLog.empty()) )		//round
+				if ((lastTemp < (int)avg ) || (lastTemp > (int)(avg+0.9)) || (instance->tempLog.empty()))		//histeresis
 				{
 					// decided agains chrono just make it a hell lot more complex
 					// instance->tempLog.insert(std::make_pair(std::chrono::system_clock::now(), (int)avg));
 					time_t current_raw_time = time(0);
 					// System time: number of seconds since 00:00,
-					instance->tempLog.insert(std::make_pair(current_raw_time, (int)(avg + 0.5)));  //round
+					instance->tempLog.insert(std::make_pair(current_raw_time, (int)(avg)));  //round
 
-					ESP_LOGI(TAG, "Logging: %d° at date: %lld", (int)(avg + 0.5) , current_raw_time);
+					ESP_LOGI(TAG, "Logging: %d° at date: %lld", (int)(avg) , current_raw_time);
 				}
 				else
 				{
