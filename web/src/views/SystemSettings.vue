@@ -19,6 +19,7 @@ const systemSettings = ref<ISystemSettings>({
   temperatureScale: 0,
   speaker1Pin: 0,
   speaker2Pin: 0,
+  onewirePowerPin: 0,
 });
 
 // is same as enum TemperatureScale, but this wel never change, converting enum to options would be wastefull
@@ -145,6 +146,17 @@ const scaleChanged = () => {
           <v-text-field requierd v-model.number="systemSettings.onewirePin" :label='t("systemSettings.onewire_pin")'>
             <template v-slot:append>
               <v-tooltip :text='t("systemSettings.onewire_pin_tooltip")'>
+                <template v-slot:activator="{ props }">
+                  <v-icon size="small" v-bind="props">{{ mdiHelp }}</v-icon>
+                </template>
+              </v-tooltip>
+            </template>
+          </v-text-field>
+        </v-col>
+        <v-col cols="12" md="3">
+          <v-text-field requierd v-model.number="systemSettings.onewirePowerPin" :label='t("systemSettings.onewire_power_pin")'>
+            <template v-slot:append>
+              <v-tooltip :text='t("systemSettings.onewire_power_pin_tooltip")'>
                 <template v-slot:activator="{ props }">
                   <v-icon size="small" v-bind="props">{{ mdiHelp }}</v-icon>
                 </template>

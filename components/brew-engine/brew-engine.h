@@ -204,6 +204,7 @@ private:
     gpio_num_t buzzer_PIN;
     gpio_num_t speaker1_PIN;
     gpio_num_t speaker2_PIN;
+	gpio_num_t onewirePower_PIN;
 
     uint8_t buzzerTime; // in seconds
     uint16_t soundTime; // in milliseconds

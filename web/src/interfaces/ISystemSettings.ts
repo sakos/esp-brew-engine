@@ -10,4 +10,5 @@ export interface ISystemSettings {
   temperatureScale: TemperatureScale;
   speaker1Pin: number;
   speaker2Pin: number;
+  onewirePowerPin: number;
 }

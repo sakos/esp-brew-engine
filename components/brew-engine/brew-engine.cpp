@@ -73,6 +73,16 @@ void BrewEngine::Init()
 		gpio_set_level(this->speaker2_PIN, 0);
 	}
 
+	if (!this->onewirePower_PIN)
+	{
+		ESP_LOGW(TAG, "Onewire power pin is not configured!");
+	}
+	else
+	{
+		gpio_reset_pin(this->onewirePower_PIN);
+		gpio_set_direction(this->onewirePower_PIN, GPIO_MODE_OUTPUT);
+		gpio_set_level(this->onewirePower_PIN, this->gpioLow);
+	}
 
 	// read other settings like maishschedules and pid
 	this->readSettings();
@@ -129,6 +139,7 @@ void BrewEngine::readSystemSettings()
 	this->buzzerTime = this->settingsManager->Read("buzzerTime", (uint8_t)2);
 	this->speaker1_PIN = (gpio_num_t)this->settingsManager->Read("speaker1Pin", (uint16_t)CONFIG_SPEAKER1);
 	this->speaker2_PIN = (gpio_num_t)this->settingsManager->Read("speaker2Pin", (uint16_t)CONFIG_SPEAKER2);
+	this->onewirePower_PIN = (gpio_num_t)this->settingsManager->Read("onewirePowerPin", (uint16_t)CONFIG_ONEWIREPOWER);
 
 	bool configInvertOutputs = false;
 // is there a cleaner way to do this?, config to bool doesn't seem to work properly
@@ -873,17 +884,32 @@ void BrewEngine::detectOnewireTemperatureSensors()
 
 	// we need to temp stop our temp read loop while we change the sensor data
 	this->skipTempLoop = true;
-	vTaskDelay(pdMS_TO_TICKS(2000));
-
-	ESP_LOGI(TAG, "initOneWire: Start");		//Do onewire init as well every time. 
-
+	
+	// Meanwhile waiting do a onewire power reset because DS18B20 sensor can get stuck caused by glitches triggered by powerline spikes at relay switches
+	if (this->onewirePower_PIN > 0)
+	{
+		ESP_LOGI(TAG, "initOneWire: Power reset");		//Do onewire init as well every time. 
+		gpio_set_level(this->onewirePower_PIN, this->gpioLow);
+	}
+	
 	// Safely release existing bus before reinitialization
 	if (this->obh != nullptr) 
 	{
-		ESP_LOGI(TAG, "initOneWire: Release first");		//Do onewire init as well every time. 
+		ESP_LOGI(TAG, "initOneWire: Release existing");		//Do onewire init as well every time. 
 		ESP_ERROR_CHECK(onewire_bus_del(this->obh));  // Releases RMT channels & bus resources [1]
 		this->obh = nullptr;  // Prevent dangling pointer
 	}
+
+
+	vTaskDelay(pdMS_TO_TICKS(1000));
+	if (this->onewirePower_PIN > 0)
+	{
+		gpio_set_level(this->onewirePower_PIN, this->gpioHigh);
+	}
+
+	vTaskDelay(pdMS_TO_TICKS(1000));
+	ESP_LOGI(TAG, "initOneWire: Start"); 
+
 	
 	onewire_bus_config_t bus_config;
 	bus_config.bus_gpio_num = this->oneWire_PIN;
@@ -2412,6 +2438,7 @@ string BrewEngine::processCommand(const string &payLoad)
 			{"temperatureScale", this->temperatureScale},
 			{"speaker1Pin", this->speaker1_PIN},
 			{"speaker2Pin", this->speaker2_PIN},
+			{"onewirePowerPin", this->onewirePower_PIN},
 		};
 	}
 	else if (command == "SaveSystemSettings")
