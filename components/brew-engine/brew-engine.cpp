@@ -210,7 +210,12 @@ void BrewEngine::saveSystemSettingsJson(const json &config)
 	if (!config["speaker2Pin"].is_null() && config["speaker2Pin"].is_number())
 	{
 		this->settingsManager->Write("speaker2Pin", (uint16_t)config["speaker2Pin"]);
-		this->speaker1_PIN = (gpio_num_t)config["speaker2Pin"];
+		this->speaker2_PIN = (gpio_num_t)config["speaker2Pin"];
+	}
+	if (!config["onewirePowerPin"].is_null() && config["onewirePowerPin"].is_number())
+	{
+		this->settingsManager->Write("onewirePowerPin", (uint16_t)config["onewirePowerPin"]);
+		this->onewirePower_PIN = (gpio_num_t)config["onewirePowerPin"];
 	}
 
 
@@ -2038,9 +2043,9 @@ void BrewEngine::speaker(void *arg)
 
 
 		ledc_channel_config_t ledc_channel2 = ledc_channel1;// Define 2nd PWM channel
-		ledc_channel1.channel        = LEDC_CHANNEL_1;
-		ledc_channel1.gpio_num       = instance->speaker2_PIN;  // First GPIO pin
-		ledc_channel1.hpoint         = 128;			//Shift half period instead of inverting.
+		ledc_channel2.channel        = LEDC_CHANNEL_1;
+		ledc_channel2.gpio_num       = instance->speaker2_PIN;  // First GPIO pin
+		ledc_channel2.hpoint         = 128;			//Shift half period instead of inverting.
 
 		ledc_channel_config(&ledc_channel1);
 		ledc_channel_config(&ledc_channel2);
