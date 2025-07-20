@@ -896,6 +896,7 @@ void BrewEngine::detectOnewireTemperatureSensors()
 
 	// we need to temp stop our temp read loop while we change the sensor data
 	this->skipTempLoop = true;
+	vTaskDelay(pdMS_TO_TICKS(2000));  // Wait for ongoing onewire activities to complete.
 	
 	// Meanwhile waiting do a onewire power reset because DS18B20 sensor can get stuck caused by glitches triggered by powerline spikes at relay switches
 	if (this->onewirePower_PIN > 0)
@@ -913,13 +914,13 @@ void BrewEngine::detectOnewireTemperatureSensors()
 	}
 
 
-	vTaskDelay(pdMS_TO_TICKS(1000));
+	vTaskDelay(pdMS_TO_TICKS(500));
 	if (this->onewirePower_PIN > 0)
 	{
 		gpio_set_level(this->onewirePower_PIN, this->gpioHigh);
 	}
 
-	vTaskDelay(pdMS_TO_TICKS(1000));
+	vTaskDelay(pdMS_TO_TICKS(100));
 	ESP_LOGI(TAG, "initOneWire: Start"); 
 
 	
