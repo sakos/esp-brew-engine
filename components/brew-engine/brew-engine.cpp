@@ -450,6 +450,7 @@ void BrewEngine::addDefaultMash()
 	defaultMash_s1->name = "Beta Amylase";
 	defaultMash_s1->temperature = (this->temperatureScale == Celsius) ? 64 : 150;
 	defaultMash_s1->stepTime = 5;
+	defaultMash_s1->extendStepTimeIfNeeded = true;
 	defaultMash_s1->allowBoost = true;
 	defaultMash_s1->time = 45;
 	defaultMash->steps.push_back(defaultMash_s1);
@@ -459,6 +460,7 @@ void BrewEngine::addDefaultMash()
 	defaultMash_s2->name = "Alpha Amylase";
 	defaultMash_s2->temperature = (this->temperatureScale == Celsius) ? 72 : 160;
 	defaultMash_s2->stepTime = 5;
+	defaultMash_s2->extendStepTimeIfNeeded = true;
 	defaultMash_s2->allowBoost = false;
 	defaultMash_s2->time = 20;
 	defaultMash->steps.push_back(defaultMash_s2);
@@ -468,6 +470,7 @@ void BrewEngine::addDefaultMash()
 	defaultMash_s3->name = "Mash Out";
 	defaultMash_s3->temperature = (this->temperatureScale == Celsius) ? 78 : 170;
 	defaultMash_s3->stepTime = 5;
+	defaultMash_s3->extendStepTimeIfNeeded = true;
 	defaultMash_s3->allowBoost = false;
 	defaultMash_s3->time = 5;
 	defaultMash->steps.push_back(defaultMash_s3);
@@ -499,6 +502,7 @@ void BrewEngine::addDefaultMash()
 	ryeMash_s1->name = "Beta Glucanase";
 	ryeMash_s1->temperature = (this->temperatureScale == Celsius) ? 43 : 110;
 	ryeMash_s1->stepTime = 5;
+	ryeMash_s1->extendStepTimeIfNeeded = true;
 	ryeMash_s1->allowBoost = true;
 	ryeMash_s1->time = 20;
 	ryeMash->steps.push_back(ryeMash_s1);
@@ -508,6 +512,7 @@ void BrewEngine::addDefaultMash()
 	ryeMash_s2->name = "Beta Amylase";
 	ryeMash_s2->temperature = (this->temperatureScale == Celsius) ? 64 : 150;
 	ryeMash_s2->stepTime = 5;
+	ryeMash_s2->extendStepTimeIfNeeded = true;
 	ryeMash_s2->allowBoost = false;
 	ryeMash_s2->time = 45;
 	ryeMash->steps.push_back(ryeMash_s2);
@@ -517,6 +522,7 @@ void BrewEngine::addDefaultMash()
 	ryeMash_s3->name = "Alpha Amylase";
 	ryeMash_s3->temperature = (this->temperatureScale == Celsius) ? 72 : 160;
 	ryeMash_s3->stepTime = 5;
+	ryeMash_s3->extendStepTimeIfNeeded = true;
 	ryeMash_s3->allowBoost = false;
 	ryeMash_s3->time = 20;
 	ryeMash->steps.push_back(ryeMash_s3);
@@ -557,6 +563,7 @@ void BrewEngine::addDefaultMash()
 	boil_s1->name = "Boil";
 	boil_s1->temperature = (this->temperatureScale == Celsius) ? 101 : 214;
 	boil_s1->stepTime = 15;
+	boil_s1->extendStepTimeIfNeeded = true;
 	boil_s1->time = 70;
 	boil->steps.push_back(boil_s1);
 
@@ -1116,6 +1123,7 @@ void BrewEngine::loadSchedule()
 	// add a fake step that will help initializing the first vaid step in control loop
 	auto fakeStep = new ExecutionStep();
 	fakeStep->time = SchedStartTime;
+	fakeStep->extendIfNeeded = false;
 	fakeStep->temperature = this->temperature;
 	fakeStep->allowBoost = false;
 	fakeStep->stepName = "Starting...";
@@ -1142,6 +1150,7 @@ void BrewEngine::loadSchedule()
 		execStep->time = stepEndTime;
 		execStep->temperature = (float)step->temperature;
 		execStep->allowBoost = step->allowBoost;
+		execStep->extendIfNeeded = step->extendStepTimeIfNeeded;
 		execStep->stepName = step->name + " - ramp";
 		execStep->hold = false;
 		
@@ -1452,6 +1461,7 @@ void BrewEngine::readLoop(void *arg)
 				instance->currentTemperatures.insert_or_assign(key, sensor->lastTemp);
 			}
 		}
+		
 
 		float avg = 0;
 		if (nrOfSensors > 0) 
@@ -1854,7 +1864,7 @@ void BrewEngine::controlLoop(void *arg)
 				ESP_LOGI(TAG, "Next step started");
 			}
 		}
-		else if (!currentStep->hold && now >= currentStep->time - seconds (instance->overTimeTrigger) && now <= currentStep->time - seconds (instance->overTimeTrigger-2))
+		else if (!currentStep->hold && !currentStep->extendIfNeeded && now >= currentStep->time - seconds (instance->overTimeTrigger) && now <= currentStep->time - seconds (instance->overTimeTrigger-2))
 		// Ramp is close to expiration, check if time extension is needed. No trigger if temp missed only in the very last seconds
 		{
 			ESP_LOGI(TAG, "Ramp step temp check");
@@ -1875,13 +1885,13 @@ void BrewEngine::controlLoop(void *arg)
 			}
 			else
 			{
-				if (currentStep->hold)
-				// In hold the temp is fixed
+				if (currentStep->hold || currentStep->extendIfNeeded)
+				// In hold the temp is fixed, if adaptive ramp time the final target is set at the beginning to make it as fast as possible
 				{
 					instance->targetTemperature = currentStep->temperature;
 				}
 				else
-				// In ramp we calculate the elapsed time in percent. Add PID loop time as the goal temp is targeted at PID loop done
+				// In fixed time ramp we calculate the elapsed time in percent. Add PID loop time as the goal temp is targeted at PID loop done
 				{
 					tempRate = (uint)
 					100 * ((now + seconds(instance->pidLoopTime) - prevStep->time).count()) /

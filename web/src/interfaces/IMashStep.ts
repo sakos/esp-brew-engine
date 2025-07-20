@@ -4,6 +4,7 @@ export interface IMashStep {
   temperature: number;
   stepTime: number;
   time: number;
+  extendStepTimeIfNeeded: boolean;
   allowBoost: boolean;
 }
 
@@ -13,5 +14,6 @@ export const defaultMashStep: IMashStep = {
   temperature: 50,
   stepTime: 5,
   time: 10,
+  extendStepTimeIfNeeded: true,
   allowBoost: false,
 };

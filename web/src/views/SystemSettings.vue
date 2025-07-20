@@ -241,7 +241,7 @@ const scaleChanged = () => {
           </v-checkbox>
         </v-col>
       </v-row>
-
+	  
       <v-row>
         <v-col cols="12" md="3">
           <v-text-field v-model="systemSettings.mqttUri" placeholder="mqtt://user:password@192.168.0.1:1883"

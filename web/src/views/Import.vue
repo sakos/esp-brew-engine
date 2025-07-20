@@ -95,6 +95,7 @@ const parseBeer = (beerToImport: Element) => {
         temperature: stepTemperature,
         stepTime: stepStepTime,
         time: stepTime,
+        extendStepTimeIfNeeded: true,
         allowBoost: allowBoost,
       };
       beer.mashSteps.push(mashStep);
@@ -208,6 +209,7 @@ const parseBeer = (beerToImport: Element) => {
     temperature: boilTemp,
     stepTime: 0,
     time: boilTime,
+    extendStepTimeIfNeeded: true,
     allowBoost: true,
   };
   beer.boilSteps.push(boilStep);

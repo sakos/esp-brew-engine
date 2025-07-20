@@ -40,6 +40,7 @@ const tableStepsHeaders = ref<Array<any>>([
   { title: t("stepEditor.name"), key: "name", align: "start" },
   { title: `${t("stepEditor.temperature")} ${appStore.tempUnit}`, key: "temperature", align: "end" },
   { title: t("stepEditor.step_time"), key: "stepTime", align: "end" },
+  { title: t("stepEditor.extend_step_time"), key: "extendStepTimeIfNeeded", align: "end" },
   { title: t("stepEditor.allow_boost"), key: "allowBoost", align: "end" },
   { title: t("stepEditor.hold_time"), key: "time", align: "end" },
   { title: t("stepEditor.actions"), key: "actions", sortable: false },
@@ -132,6 +133,9 @@ const stepTimeRules = [
                   <v-text-field type="number" v-model.number="editingStep.stepTime" :label='t("stepEditor.step_time")' :rules="stepTimeRules" :min="1" required />
                 </v-row>
                 <v-row>
+                  <v-checkbox v-model="editingStep.extendStepTimeIfNeeded" :label='t("stepEditor.extend_step_time")' />
+                </v-row>
+                <v-row>
                   <v-checkbox v-model="editingStep.allowBoost" :label='t("stepEditor.allow_boost")' />
                 </v-row>
                 <v-row>
@@ -165,7 +169,9 @@ const stepTimeRules = [
       <v-icon size="small" class="me-2" @click="editStep(item)" :icon="mdiPencil" />
       <v-icon size="small" @click="openStepsDeleteDialog(item)" :icon="mdiDelete" />
     </template>
-    <template v-slot:[`item.allowBoost`]="{ item }">
+    <template v-slot:[`item.extendStepTimeIfNeeded`]="{ item }">
+      <v-checkbox-btn class="align-right justify-center" v-model="item.extendStepTimeIfNeeded" disabled />
+    </template><template v-slot:[`item.allowBoost`]="{ item }">
       <v-checkbox-btn class="align-right justify-center" v-model="item.allowBoost" disabled />
     </template>
 

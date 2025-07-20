@@ -13,6 +13,7 @@ public:
     int temperature;
     int stepTime;
     int time;
+    bool extendStepTimeIfNeeded; // if true, we extend or shorten the step time until we reach our temperatue
     bool allowBoost;             // if true, we allow boost mode for this step
 
     json to_json()
@@ -24,7 +25,7 @@ public:
         jStep["temperature"] = this->temperature;
         jStep["stepTime"] = this->stepTime;
         jStep["time"] = this->time;
-		jStep["extendStepTimeIfNeeded"] = true;			// for backward compatibility in cas of downgrade
+		jStep["extendStepTimeIfNeeded"] = this->extendStepTimeIfNeeded;
         jStep["allowBoost"] = this->allowBoost;
 
         return jStep;
@@ -37,6 +38,15 @@ public:
         this->temperature = jsonData["temperature"].get<int>();
         this->stepTime = jsonData["stepTime"].get<int>();
         this->time = jsonData["time"].get<int>();
+        
+        if (jsonData.contains("extendStepTimeIfNeeded"))
+        {
+            this->extendStepTimeIfNeeded = jsonData["extendStepTimeIfNeeded"].get<bool>();
+        }
+        else
+        {
+            this->extendStepTimeIfNeeded = false;
+        }
  
         if (jsonData.contains("allowBoost"))
         {
