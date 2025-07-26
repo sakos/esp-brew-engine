@@ -1193,7 +1193,7 @@ void BrewEngine::loadSchedule()
 	// Add notifications to schedule
 	for (auto const &notification : schedule->notifications)
 	{
-		// Schedule notification with a small delay to secure that notification is not triggered before inOverTime flag is fired in GUI
+		// Schedule notification. Hre could be added a small delay to secure that zero timed notification is not triggered before inOverTime flag is fired in GUI
 		auto notificationTime = SchedStartTime + minutes(notification->timeAbsolute); 
 
 		// copy notification to new map
@@ -1221,7 +1221,7 @@ void BrewEngine::recalculateScheduleAfterOverTime(const uint extraSeconds)
 
 	if (currentPos == this->executionSteps.end())
 	{
-		ESP_LOGE(TAG, "Steps not availible anymore");
+		ESP_LOGE(TAG, "Steps not available anymore");
 		this->stop();
 		return;
 	}
@@ -1242,7 +1242,7 @@ void BrewEngine::recalculateScheduleAfterOverTime(const uint extraSeconds)
 		}
 	}
 
-	// increate version so client can follow changes
+	// increase version so client can follow changes
 	this->runningVersion++;
 }
 
@@ -1821,8 +1821,8 @@ void BrewEngine::controlLoop(void *arg)
 			if (instance->inOverTime)
 			// Exit from overtime and update web to re-enable pending notification
 			{
-				instance->runningVersion++;
 				instance->inOverTime = false;
+				instance->runningVersion++;
 			}
 			
 			if (instance->executionSteps.size() < (instance->currentMashStep + 2))

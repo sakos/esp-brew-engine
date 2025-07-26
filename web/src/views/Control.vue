@@ -51,6 +51,10 @@ const notificationDialogText = ref<string>("");
 const notificationTimeouts = ref<Array<number>>([]);
 const notificationsShown = ref<Array<number>>([]);
 
+const lastCheckedAt = ref<number>(0); // Unix timestamp in milisec, 0 at beginning
+const MAX_CHECK_INTERVAL = 1 * 60 * 1000; // 1 minute
+
+
 const chartInitDone = ref(false);
 
 const lastGoodDataDate = ref<number | null>(null);
@@ -129,7 +133,6 @@ const speakMessage = async (message: string) => {
 };
 
 const showNotificaton = async (notification: INotification, alert: boolean) => {
-
 
   notificationsShown.value.push(notification.timePoint);
 
@@ -363,6 +366,7 @@ const setNotifications = (newNotifications: Array<INotification>) => {
 };
 
 const getRunningSchedule = async () => {
+
   const requestData = {
     command: "GetRunningSchedule",
     data: null,
@@ -423,10 +427,15 @@ const getData = async () => {
   
   
   const serverRunningVersion = apiResult.data.runningVersion;
+  const now = Date.now();
+  const isTimeoutExpired = (now - lastCheckedAt.value) > MAX_CHECK_INTERVAL;
 
-  if (status.value === "Running" && lastRunningVersion.value !== serverRunningVersion) {
+
+  if (status.value === "Running" && (lastRunningVersion.value !== serverRunningVersion || isTimeoutExpired)) {
     // the schedule has changed, we need to update
+	// Periodic update as well to prevent delay in browser due to sleep.
     getRunningSchedule();
+	lastCheckedAt.value = Date.now();
   }
 
   if (inOverTime.value) {
