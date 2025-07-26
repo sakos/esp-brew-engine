@@ -156,8 +156,14 @@
     "allow_boost": "Allow Boost"
   },
   "mashSchedules": {
+    "schedule": "Schedule",
+    "no_schedule_selected": "No schedule selected!",
+    "invalid_file": "Invalid file!",
+    "import_success": "Schedule successfully imported!",
+    "export": "Export",
+    "import": "Import",
     "name": "Name",
-    "is_boil": "Is Boil Schedule",
+    "isBoil": "Is Boil Schedule",
     "mashSchedule": "Mash/Boil Schedule",
     "max_schedules_reached": "Only {0} can be saved!",
     "steps": "Steps",
