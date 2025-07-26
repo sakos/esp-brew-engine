@@ -1221,7 +1221,7 @@ void BrewEngine::recalculateScheduleAfterOverTime(const uint extraSeconds)
 
 	if (currentPos == this->executionSteps.end())
 	{
-		ESP_LOGE(TAG, "Steps not available anymore");
+		ESP_LOGE(TAG, "Step is not available anymore");
 		this->stop();
 		return;
 	}
@@ -1252,6 +1252,7 @@ void BrewEngine::stop()
 	this->boostStatus = Off;
 	this->inOverTime = false;
 	this->statusText = "Idle";
+	this->selectedMashScheduleName.clear();
 	this->currentStepName = "";	
 	this->overrideTargetTemperature = std::nullopt;
 	this->manualOverrideOutput = std::nullopt;
@@ -1865,7 +1866,7 @@ void BrewEngine::controlLoop(void *arg)
 				ESP_LOGI(TAG, "Next step started");
 			}
 		}
-		else if (!currentStep->hold && !currentStep->extendIfNeeded && now >= currentStep->time - seconds (instance->overTimeTrigger) && now <= currentStep->time - seconds (instance->overTimeTrigger-2))
+		else if (!currentStep->hold && currentStep->extendIfNeeded && now >= currentStep->time - seconds (instance->overTimeTrigger) && now <= currentStep->time - seconds (instance->overTimeTrigger-3))
 		// Ramp is close to expiration, check if time extension is needed. No trigger if temp missed only in the very last seconds
 		{
 			ESP_LOGI(TAG, "Ramp step temp check");
