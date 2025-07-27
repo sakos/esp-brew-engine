@@ -17,6 +17,7 @@ import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { Line } from "vue-chartjs";
 import { useI18n } from "vue-i18n";
 import BoostStatus from "@/enums/BoostStatus";
+
 const { t } = useI18n({ useScope: "global" });
 
 const webConn = inject<WebConn>("webConn");
@@ -25,6 +26,7 @@ const appStore = useAppStore();
 const clientStore = useClientStore();
 
 const status = ref<string>();
+const prevStatus = ref<string>();
 const stirStatus = ref<string>();
 const temperature = ref<number>();
 const outputPercent = ref<number>();
@@ -399,6 +401,7 @@ const getData = async () => {
     return;
   }
 
+  prevStatus.value = status.value;
   status.value = apiResult.data.status;
   stirStatus.value = apiResult.data.stirStatus;
   temperature.value = apiResult.data.temp;
@@ -413,9 +416,10 @@ const getData = async () => {
   outputOverrides.value = apiResult.data.outputOverrides;
   resetManualOutput.value = apiResult.data.resetManualOutput;
   resetManualTemp.value = apiResult.data.resetManualTemp;
-  if (status.value !== 'Idle') {
+  if (status.value !== 'Idle' || (status.value === 'Idle' && prevStatus.value !== 'Idle')) {
 	selectedMashSchedule.value = apiResult.data.currentScheduleName;
   }
+  
 
   if (resetManualOutput.value) {
 	manualOverrideOutput.value = null;
@@ -493,6 +497,7 @@ const getData = async () => {
     tempSensors.value = apiResult3.data;
   }
 };
+
 
 const changeTargetTemp = (event: any) => {
   if (event.target.value === undefined) {
