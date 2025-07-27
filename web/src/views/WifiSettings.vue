@@ -1,226 +1,163 @@
 <script lang="ts" setup>
 import WebConn from "@/helpers/webConn";
-import { IWifiNetwork } from "@/interfaces/IWifiNetwork";
 import { IWifiSettings } from "@/interfaces/IWifiSettings";
-import { mdiConnection, mdiEye, mdiEyeOutline, mdiHelp } from "@mdi/js";
-import { inject, onBeforeUnmount, onMounted, ref } from "vue";
+import { mdiEye, mdiEyeOutline } from "@mdi/js";
+import { inject, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 const { t } = useI18n({ useScope: "global" });
 
 const webConn = inject<WebConn>("webConn");
 
 const wifiSettings = ref<IWifiSettings>({
-  // add default value, vue has issues with null values atm
-  ssid: "",
-  password: "",
   enableAP: true,
-  maxPower: 20,
+  apSSID: "",
+  apPassword: "",
+  apMaxPower: 20,
+  staSSID: "",
+  staPassword: "",
 });
-
-const dialogData = ref<IWifiSettings>({
-  // add default value, vue has issues with null values atm
-  ssid: "",
-  password: "",
-  enableAP: false,
-  maxPower: 0,
-});
-
-const wifiNetworks = ref<Array<IWifiNetwork>>([]);
-
-const networkTableHeaders = ref<Array<any>>([
-  { title: t("wifiSettings.ssid"), key: "ssid", align: "start" },
-  { title: t("wifiSettings.rssi"), key: "rssi", align: "start" },
-  { title: t("wifiSettings.channel"), key: "channel", align: "start" },
-  { title: t("wifiSettings.type"), key: "authMode", align: "start" },
-  { title: t("wifiSettings.actions"), key: "actions", sortable: false },
-]);
-const connectDialog = ref<boolean>(false);
 
 const alert = ref<string>("");
 const alertType = ref<"error" | "success" | "warning" | "info">("info");
 
-const hidePwd = ref<boolean>(true);
+const hidePwd = ref<boolean>(true); // Controls password visibility toggle
 
+// Retrieve current wifi settings from backend on mount
 const getData = async () => {
-  const requestData = {
-    command: "GetWifiSettings",
-    data: null,
-  };
+  try {
+    const requestData = {
+      command: "GetWifiSettings",
+      data: null,
+    };
+    const apiResult = await webConn?.doPostRequest(requestData);
 
-  const apiResult = await webConn?.doPostRequest(requestData);
-
-  if (apiResult === undefined || apiResult.success === false) {
-    return;
+    if (apiResult === undefined || apiResult.success === false) {
+      alert.value = t("wifiSettings.msg_fetch_failed") || "Failed to load WiFi settings";
+      alertType.value = "error";
+      return;
+    }
+    // Update local state with retrieved settings
+    wifiSettings.value = apiResult.data;
+  } catch (e) {
+    alert.value = String(e);
+    alertType.value = "error";
   }
-  wifiSettings.value = apiResult.data;
 };
 
-const scanForNetworks = async () => {
-  const requestData = {
-    command: "ScanWifi",
-    data: null,
-  };
-
-  alert.value = t("wifiSettings.msg_wait");
-  alertType.value = "info";
-
-  const apiResult = await webConn?.doPostRequest(requestData);
-
-  alert.value = ""; // clear alert
-
-  if (apiResult === undefined || apiResult.success === false) {
-    return;
-  }
-  wifiNetworks.value = apiResult.data;
-};
-
-const showConnectDialog = async (item: IWifiNetwork) => {
-  dialogData.value.ssid = item.ssid;
-  dialogData.value.enableAP = false;
-  connectDialog.value = true;
-};
-
+// Save wifi settings (both AP and STA) to backend
 const save = async () => {
-  if (wifiSettings.value == null) {
-    return;
-  }
+  alert.value = "";
 
-  if (wifiSettings.value.ssid === "") {
-    alert.value = t("wifiSettings.msg_ssid_empty");
+  // Basic validation: require at least one SSID (AP or STA)
+  if (
+    (wifiSettings.value.enableAP && wifiSettings.value.apSSID.trim() === "") &&
+    wifiSettings.value.staSSID.trim() === ""
+  ) {
+    alert.value = t("wifiSettings.msg_ssid_empty") || "SSID cannot be empty";
     alertType.value = "warning";
     return;
   }
-
-  alert.value = "";
 
   const requestData = {
     command: "SaveWifiSettings",
     data: wifiSettings.value,
   };
 
-  const result = await webConn?.doPostRequest(requestData);
-  if (result?.message != null) {
-    alert.value = result?.message;
-    alertType.value = "warning";
+  try {
+    const result = await webConn?.doPostRequest(requestData);
+    if (result?.message) {
+      alert.value = result.message;
+      alertType.value = "warning";
+    } else {
+      alert.value = t("wifiSettings.msg_save_success") || "WiFi settings saved successfully";
+      alertType.value = "success";
+    }
+  } catch (e) {
+    alert.value = String(e);
+    alertType.value = "error";
   }
-};
-
-const closeConnectDialog = async () => {
-  wifiSettings.value.ssid = dialogData.value.ssid;
-  wifiSettings.value.password = dialogData.value.password;
-  wifiSettings.value.enableAP = false;
-  connectDialog.value = false;
-  save();
-};
-
-// we clear the config when the mode is changed, this is less confusing
-const clearConfig = () => {
-  wifiSettings.value.ssid = "";
-  wifiSettings.value.password = "";
 };
 
 onMounted(() => {
   getData();
 });
-
-onBeforeUnmount(() => {});
 </script>
 
 <template>
   <v-container class="pa-6" fluid>
-    <v-alert :type="alertType" v-if="alert" closable @click:close="alert = ''">{{ alert }}</v-alert>
-    <v-form fast-fail @submit.prevent>
+    <!-- Alert for status messages -->
+    <v-alert :type="alertType" v-if="alert" dismissible @click:close="alert = ''">
+      {{ alert }}
+    </v-alert>
 
+    <v-form @submit.prevent>
+      <!-- Display Access Point Mode status (readonly) -->
+	  <h3>{{ wifiSettings.enableAP ? t('wifiSettings.access_point_mode_enabled') : t('wifiSettings.client_mode_enabled') }}</h3>
+
+      <!-- AP Settings title -->
+	  <div class="text-subtitle-2 mt-4 mb-2">{{ $t('wifiSettings.ap_settings') }}</div>
+
+      <!-- Access Point settings - always visible -->
       <v-row>
         <v-col cols="12" md="6">
-          <v-switch v-model="wifiSettings.enableAP" :label='t("wifiSettings.access_point_mode")' color="red"
-            @click="clearConfig()">
-            <template v-slot:append>
-              <v-tooltip :text='t("wifiSettings.access_point_modeDesc")'>
-                <template v-slot:activator="{ props }">
-                  <v-icon size="small" v-bind="props">{{ mdiHelp }}</v-icon>
-                </template>
-              </v-tooltip>
-            </template>
-          </v-switch>
+          <v-text-field
+            v-model="wifiSettings.apSSID"
+            :label="t('wifiSettings.access_point_name')"
+            maxlength="32"
+            hint="The SSID broadcasted by the device"
+            persistent-hint
+          />
+          <v-text-field
+            v-model="wifiSettings.apPassword"
+            :type="hidePwd ? 'password' : 'text'"
+            :label="t('wifiSettings.password')"
+            :append-icon="hidePwd ? mdiEye : mdiEyeOutline"
+            @click:append="() => (hidePwd = !hidePwd)"
+            maxlength="64"
+            hint="Password for AP (optional)"
+            persistent-hint
+          />
+          <v-slider
+            class="mt-4"
+			v-model="wifiSettings.apMaxPower"
+            :label="t('wifiSettings.max_wifi_power')"
+            step="1"
+            thumb-label="always"
+            max="20"
+            min="10"
+          />
         </v-col>
       </v-row>
 
-      <v-row>
-        <v-col cols="12" md="6" v-if="!wifiSettings.enableAP">
-          <v-text-field v-model="wifiSettings.ssid" :label='t("wifiSettings.join_network")' />
-        </v-col>
-        <v-col cols="12" md="6" v-if="wifiSettings.enableAP">
-          <v-text-field v-model="wifiSettings.ssid" :label='t("wifiSettings.access_point_name")' />
-        </v-col>
-      </v-row>
+      <!-- Client settings title -->
+	  <div class="text-subtitle-2 mt-4 mb-2">{{ $t('wifiSettings.client_settings') }}</div>
+
+      <!-- Station settings -->
       <v-row>
         <v-col cols="12" md="6">
-          <v-text-field v-model="wifiSettings.password" :type="hidePwd ? 'password' : 'text'"
-            :label='t("wifiSettings.password")' :append-icon="hidePwd ? mdiEye : mdiEyeOutline"
-            @click:append="() => (hidePwd = !hidePwd)" />
-        </v-col>
-      </v-row>
-      <v-row>
-        <v-col cols="12" md="6">
-          <v-slider v-model="wifiSettings.maxPower" :label='t("wifiSettings.max_wifi_power")' step="1"
-            thumb-label="always" max=20 min=10 />
-        </v-col>
-      </v-row>
-
-      <v-row>
-        <v-col cols="12" md="12">
-
-          <v-form fast-fail @submit.prevent>
-            <v-data-table :headers="networkTableHeaders" :items="wifiNetworks" density="compact" item-value="name">
-              <template v-slot:top>
-                <v-toolbar density="compact">
-                  <v-toolbar-title>{{ t("wifiSettings.found_networks") }}</v-toolbar-title>
-                  <v-spacer />
-                  <v-btn color="secondary" variant="outlined" class="mr-5" @click="scanForNetworks()">
-                    {{ t("wifiSettings.scan") }}
-                  </v-btn>
-
-                  <v-dialog v-model="connectDialog" max-width="500px">
-                    <v-card>
-                      <v-toolbar density="compact" color="dialog-header">
-                        <v-toolbar-title>{{ t("wifiSettings.connect") }}</v-toolbar-title>
-                      </v-toolbar>
-
-                      <v-card-text>
-                        <v-container>
-                          <v-row>
-                            <v-text-field v-model="dialogData.ssid" :label='t("wifiSettings.ssid")' readonly />
-                          </v-row>
-                          <v-row>
-                            <v-text-field v-model="dialogData.password" :label='t("wifiSettings.password")' />
-                          </v-row>
-                        </v-container>
-                      </v-card-text>
-
-                      <v-card-actions>
-                        <v-spacer />
-                        <v-btn color="blue-darken-1" variant="text" @click="closeConnectDialog">
-                          {{ t("wifiSettings.connect") }}
-                        </v-btn>
-                      </v-card-actions>
-                    </v-card>
-                  </v-dialog>
-
-                </v-toolbar>
-              </template>
-              <template v-slot:[`item.actions`]="{ item }">
-                <v-icon size="small" class="me-2" @click="showConnectDialog(item)" :icon="mdiConnection" />
-              </template>
-            </v-data-table>
-
-          </v-form>
+          <v-text-field
+            v-model="wifiSettings.staSSID"
+            :label="t('wifiSettings.join_network')"
+            maxlength="32"
+            clearable
+          />
+          <v-text-field
+            v-model="wifiSettings.staPassword"
+            :type="hidePwd ? 'password' : 'text'"
+            :label="t('wifiSettings.password')"
+            :append-icon="hidePwd ? mdiEye : mdiEyeOutline"
+            @click:append="() => (hidePwd = !hidePwd)"
+            maxlength="64"
+          />
         </v-col>
       </v-row>
 
+      <!-- Save button -->
       <v-row>
         <v-col cols="12" md="3">
-          <v-btn color="success" class="mt-4 mr-2" @click="save"> {{ t("general.save") }} </v-btn>
+          <v-btn color="success" class="mt-4" @click="save">
+            {{ t("general.save") }}
+          </v-btn>
         </v-col>
       </v-row>
     </v-form>

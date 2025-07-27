@@ -100,7 +100,12 @@
     "max_wifi_power": "Max Wifi Power (dBm)",
     "found_networks": "Found Networks",
     "scan": "Scan",
-    "connect": "Connect"
+    "connect": "Connect",
+	"access_point_mode_enabled": "Wi-Fi AP mode active",
+	"client_mode_enabled": "Wi-Fi is in client mode",
+	"operation_mode": "Wi-Fi operation mode",
+	"ap_settings": "Fallback AP configuration",
+	"client_settings": "Wi-Fi client configuration"
   },
   "tempSettings": {
     "id": "Id",

@@ -1,6 +1,13 @@
 export interface IWifiSettings {
-  ssid: string;
-  password: string;
+ 
   enableAP: boolean;
-  maxPower: number;
+
+  // AP configuration
+  apSSID: string;
+  apPassword: string;
+  apMaxPower: number;
+
+  // STA configuration
+  staSSID: string;
+  staPassword: string;
 }

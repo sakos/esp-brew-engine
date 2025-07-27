@@ -15,7 +15,7 @@ WiFiConnect::WiFiConnect(SettingsManager *settingsManager)
     this->settingsManager = settingsManager;
 }
 
-void WiFiConnect::Connect()
+/*void WiFiConnect::Connect()
 {
     this->readSettings();
 
@@ -29,18 +29,101 @@ void WiFiConnect::Connect()
         ESP_LOGI(TAG, "Starting wifi Station");
         this->wifi_init_sta();
     }
+}*/
+
+void WiFiConnect::Connect()
+{
+    this->readSettings();
+	
+	ESP_ERROR_CHECK(esp_event_loop_create_default());
+
+    // If no STA config is present start in AP mode directly
+    if (this->staSSID.empty()) {
+        ESP_LOGW(TAG, "No STA SSID configured, starting Access Point as fallback");
+        this->wifi_init_softap();
+		this->enableAP = true;		// this flag is for config save backward compatibility only
+        return;
+    }
+
+    // Try to establish STA client wifi connection
+    ESP_LOGI(TAG, "Starting Wifi Station (client) mode");
+    bool sta_connected = this->wifi_try_sta_connect();
+
+    if (sta_connected) {
+        ESP_LOGI(TAG, "STA connect succeeded, operating in client mode.");
+        // Successful, we are in STA mode
+		this->enableAP = false;		// this flag is for config save backward compatibility only
+        return;
+    } else {
+        ESP_LOGW(TAG, "STA connect failed, starting Access Point as fallback.");
+        // Connection failed fallback to AP mode
+        this->wifi_init_softap();
+		this->enableAP = true;		// this flag is for config save backward compatibility only
+        return;
+    }
 }
+
 
 void WiFiConnect::readSettings()
 {
     ESP_LOGI(TAG, "Reading Wifi Settings");
 
     // the logic here is that settings from nvs get preference, but if they don't exist settings from menuconfig are used and also saved to nvs
-    this->ssid = this->settingsManager->Read("wifi_ssid", (string)CONFIG_WIFI_SSID);
-    this->password = this->settingsManager->Read("wifi_password", (string)CONFIG_WIFI_PASS);
-    this->Hostname = this->settingsManager->Read("Hostname", (string)CONFIG_HOSTNAME);
-    this->maxWifiPower = this->settingsManager->Read("wifi_max_power", (int8_t)CONFIG_ESP_PHY_MAX_WIFI_TX_POWER);
+    // First read the version flag; default 1 (legacy) if not present
+    int8_t version = this->settingsManager->Read("wifi_conf_ver", (int8_t)1);
 
+    if (version >= 2)
+    {
+        // New format reading
+		ESP_LOGI(TAG, "Wifi config version:2 found");
+        this->enableAP = this->settingsManager->Read("wifi_ap", true);
+        this->apSSID = this->settingsManager->Read("wifi_ap_ssid", (string)CONFIG_WIFI_SSID);
+        this->apPassword = this->settingsManager->Read("wifi_ap_pass", (string)CONFIG_WIFI_PASS);
+        this->apMaxPower = this->settingsManager->Read("wifi_max_power", (int8_t)CONFIG_ESP_PHY_MAX_WIFI_TX_POWER);
+        this->staSSID = this->settingsManager->Read("wifi_sta_ssid", (string)"");
+        this->staPassword = this->settingsManager->Read("wifi_sta_pass", (string)"");
+		ESP_LOGI(TAG, "Read AP SSID: '%s', length: %d", this->apSSID.c_str(), this->apSSID.length());
+		ESP_LOGI(TAG, "Read AP password: '%s', length: %d", this->apPassword.c_str(), this->apPassword.length());
+		ESP_LOGI(TAG, "Read STA SSID: '%s', length: %d", this->staSSID.c_str(), this->staSSID.length());
+		ESP_LOGI(TAG, "Read STA password: '%s', length: %d", this->staPassword.c_str(), this->staPassword.length());
+    }
+    else
+    {
+        // Legacy reading
+		ESP_LOGI(TAG, "Wifi legacy config version found");
+        this->ssid = this->settingsManager->Read("wifi_ssid", (string)"");
+        this->password = this->settingsManager->Read("wifi_password", (string)"");
+        this->maxWifiPower = this->settingsManager->Read("wifi_max_power", (int8_t)CONFIG_ESP_PHY_MAX_WIFI_TX_POWER);
+        this->enableAP = this->settingsManager->Read("wifi_ap", false);
+
+        // Map legacy to current fields for internal use or convert JSON on the fly if needed
+        if (this->enableAP)
+        {
+            this->apSSID = this->ssid;
+            this->apPassword = this->password;
+            this->staSSID = "";
+            this->staPassword = "";
+        }
+        else
+        {
+            this->staSSID = this->ssid;
+            this->staPassword = this->password;
+            this->apSSID = "";
+            this->apPassword = "";
+        }
+		ESP_LOGI(TAG, "Mapped AP SSID: '%s', length: %d", this->apSSID.c_str(), this->apSSID.length());
+		ESP_LOGI(TAG, "Mapped AP password: '%s', length: %d", this->apPassword.c_str(), this->apPassword.length());
+		ESP_LOGI(TAG, "Mapped STA SSID: '%s', length: %d", this->staSSID.c_str(), this->staSSID.length());
+		ESP_LOGI(TAG, "Mapped STA password: '%s', length: %d", this->staPassword.c_str(), this->staPassword.length());
+
+		// Secure that fallback AP config is present in any case.
+		if (this->apSSID.empty()) 
+		{
+			ESP_LOGI(TAG, "No fallback AP SSID was found, set default SSID and password");
+			this->apSSID = CONFIG_WIFI_SSID;
+		    this->apPassword = CONFIG_WIFI_PASS;
+		}
+    }
     bool configUseWifiAP = false;
 // is there a cleaner way to do this?, config to bool doesn't seem to work properly
 #if defined(CONFIG_WIFI_AP)
@@ -56,11 +139,42 @@ void WiFiConnect::saveSettings()
 {
     ESP_LOGI(TAG, "Saving Wifi Settings");
 
-    this->settingsManager->Write("wifi_ssid", this->ssid);
-    this->settingsManager->Write("wifi_password", this->password);
+    // Save new style keys (AP+STA both)
+    this->settingsManager->Write("wifi_conf_ver", (int8_t)2);
+	
+    this->settingsManager->Write("wifi_ap_ssid", this->apSSID);
+    this->settingsManager->Write("wifi_ap_pass", this->apPassword);
+    this->settingsManager->Write("wifi_max_power", this->apMaxPower);
+
+    this->settingsManager->Write("wifi_sta_ssid", this->staSSID);
+    this->settingsManager->Write("wifi_sta_pass", this->staPassword);
+
     this->settingsManager->Write("wifi_ap", this->enableAP);
-    this->settingsManager->Write("wifi_max_power", this->maxWifiPower);
     this->settingsManager->Write("Hostname", this->Hostname);
+
+	ESP_LOGI(TAG, "Saved AP SSID: '%s', length: %d", this->apSSID.c_str(), this->apSSID.length());
+	ESP_LOGI(TAG, "Saved AP password: '%s', length: %d", this->apPassword.c_str(), this->apPassword.length());
+	ESP_LOGI(TAG, "Saved STA SSID: '%s', length: %d", this->staSSID.c_str(), this->staSSID.length());
+	ESP_LOGI(TAG, "Saved STA password: '%s', length: %d", this->staPassword.c_str(), this->staPassword.length());
+
+	
+    // Backward compatibility: save legacy keys based on enableAP flag
+    if (this->enableAP)
+    {
+        // If AP mode enabled, treat legacy ssid/password/maxPower as AP settings for compatibility
+		ESP_LOGI(TAG, "Save legacy wifi settings as AP enabled");
+        this->settingsManager->Write("wifi_ssid", this->apSSID);
+        this->settingsManager->Write("wifi_password", this->apPassword);
+        this->settingsManager->Write("wifi_max_power", this->apMaxPower);
+    }
+    else
+    {
+        // If AP mode disabled, legacy keys represent STA settings
+ 		ESP_LOGI(TAG, "Save legacy wifi settings as AP disabled");
+        this->settingsManager->Write("wifi_ssid", this->staSSID);
+        this->settingsManager->Write("wifi_password", this->staPassword);
+        this->settingsManager->Write("wifi_max_power", this->apMaxPower);
+    }
 
     ESP_LOGI(TAG, "Saving Wifi Settings Done");
 }
@@ -164,17 +278,16 @@ void WiFiConnect::wifi_event_handler(void *arg, esp_event_base_t event_base, int
     }
 }
 
-void WiFiConnect::wifi_init_sta(void)
-{
 
+bool WiFiConnect::wifi_try_sta_connect()
+{
     this->s_wifi_event_group = xEventGroupCreate();
 
     ESP_ERROR_CHECK(esp_netif_init());
-
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    //ESP_ERROR_CHECK(esp_event_loop_create_default());
     this->sta_netif = esp_netif_create_default_wifi_sta();
 
-    // set the Hostname
+    // set Hostname
     ESP_ERROR_CHECK(esp_netif_set_hostname(this->sta_netif, this->Hostname.c_str()));
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
@@ -189,44 +302,39 @@ void WiFiConnect::wifi_init_sta(void)
     ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &this->wifi_event_handler, this, &instance_got_ip));
 
     wifi_config_t wifi_config{};
-    strcpy((char *)wifi_config.sta.ssid, this->ssid.c_str());
-    strcpy((char *)wifi_config.sta.password, this->password.c_str());
+    strncpy((char *)wifi_config.sta.ssid, this->staSSID.c_str(), sizeof(wifi_config.sta.ssid));
+    strncpy((char *)wifi_config.sta.password, this->staPassword.c_str(), sizeof(wifi_config.sta.password));
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    ESP_LOGI(TAG, "wifi_init_sta finished.");
+    ESP_LOGI(TAG, "wifi_try_sta_connect: waiting max 10s for connection...");
 
-    /* Waiting until either the connection is established (WIFI_CONNECTED_BIT) or connection failed for the maximum
-     * number of re-tries (WIFI_FAIL_BIT). The bits are set by event_handler() (see above) */
-    EventBits_t bits = xEventGroupWaitBits(this->s_wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT, pdFALSE, pdFALSE, portMAX_DELAY);
+    // Wait max 10 seconds for wifi connect.(event_handler will set the bits during this period)
+    EventBits_t bits = xEventGroupWaitBits(this->s_wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT, pdFALSE, pdFALSE, pdMS_TO_TICKS(10000));
 
-    /* xEventGroupWaitBits() returns the bits before the call returned, hence we can test which event actually
-     * happened. */
-    if (bits & WIFI_CONNECTED_BIT)
-    {
-        ESP_LOGI(TAG, "Connected to ap ssid:%s password:%s", this->ssid.c_str(), this->password.c_str());
-    }
-    else if (bits & WIFI_FAIL_BIT)
-    {
-        ESP_LOGI(TAG, "Failed to connect to ssid:%s, password:%s", this->ssid.c_str(), this->password.c_str());
-    }
-    else
-    {
-        ESP_LOGE("WifiConnect", "UNEXPECTED EVENT");
-    }
-
-    /* The event will not be processed after unregister */
+    // Unregister event handlers, clear event group
     ESP_ERROR_CHECK(esp_event_handler_instance_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, instance_got_ip));
     ESP_ERROR_CHECK(esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, instance_any_id));
     vEventGroupDelete(this->s_wifi_event_group);
+
+    if (bits & WIFI_CONNECTED_BIT) {
+        ESP_LOGI(TAG, "Successfully connected to STA (client) network");
+        return true;
+    } else {
+        ESP_LOGW(TAG, "STA connect failed or timeout.");
+        ESP_ERROR_CHECK(esp_wifi_stop());
+        // Useful to call wifi deinit to make wifi clean before starting fallback AP 
+        esp_wifi_deinit();
+        return false;
+    }
 }
 
 void WiFiConnect::wifi_init_softap(void)
 {
     ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    //ESP_ERROR_CHECK(esp_event_loop_create_default());
 
     this->sta_netif = esp_netif_create_default_wifi_ap();
 
@@ -236,31 +344,30 @@ void WiFiConnect::wifi_init_softap(void)
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
-    esp_wifi_set_max_tx_power(this->maxWifiPower);
+    esp_wifi_set_max_tx_power(this->apMaxPower);
 
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &this->wifi_event_handler, this, NULL));
 
     wifi_config_t wifi_config = {};
-
-    strcpy((char *)wifi_config.ap.ssid, this->ssid.c_str());
-    strcpy((char *)wifi_config.ap.password, this->password.c_str());
+    
+	strncpy((char *)wifi_config.ap.ssid, this->apSSID.c_str(), sizeof(wifi_config.ap.ssid));
+    strncpy((char *)wifi_config.ap.password, this->apPassword.c_str(), sizeof(wifi_config.ap.password));
     wifi_config.ap.channel = this->apChannel;
     wifi_config.ap.max_connection = 10;
     // wifi_config.ap.pmf_cfg.required = true;
-    wifi_config.ap.authmode = WIFI_AUTH_WPA2_PSK;
-
-    if (strlen(this->password.c_str()) == 0)
-    {
+    if (this->apPassword.length() >= 8) {
+        wifi_config.ap.authmode = WIFI_AUTH_WPA2_PSK;
+    } else {
         wifi_config.ap.authmode = WIFI_AUTH_OPEN;
     }
 
-    // future dns option inspired by?
+     // future dns option inspired by?
     // https://github.com/craftmetrics/esp32-dns-server/blob/master/dns_server.c
 
     // other option is captive portal url via dhcp option
     // or wait unitl esp-idf implements proper dns
 
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA)); // ap/station mode, so we can scan for networks
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP)); // Ap mode no scan is supported anymore
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
 
@@ -274,14 +381,22 @@ json WiFiConnect::Scan()
     memset(ap_info, 0, sizeof(ap_info));
     uint16_t ap_count = 0;
 
+	
     wifi_scan_config_t scanConfig = {};
     // run an active scan, a passive scan doesn't find all networks
     scanConfig.scan_type = WIFI_SCAN_TYPE_ACTIVE;
-    scanConfig.show_hidden = true;
+    //scanConfig.show_hidden = true;
+	scanConfig.show_hidden = false;
+	
+	wifi_mode_t mode;
+	esp_wifi_get_mode(&mode);
+	ESP_LOGI(TAG, "Current WiFi mode before scan: %d", mode);
 
-    esp_wifi_scan_start(&scanConfig, true);
-
-    ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(&number, ap_info));
+    //esp_wifi_scan_start(&scanConfig, true);
+	esp_err_t err = esp_wifi_scan_start(&scanConfig, true);
+	ESP_LOGI(TAG, "esp_wifi_scan_start returned with error %d", err);
+   
+	ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(&number, ap_info));
 
     ESP_ERROR_CHECK(esp_wifi_scan_get_ap_num(&ap_count));
     ESP_LOGI(TAG, "Total APs scanned = %u", ap_count);
@@ -290,7 +405,8 @@ json WiFiConnect::Scan()
 
     for (int idx = 0; (idx < number) && (idx < ap_count); ++idx)
     {
-        string ssid = (char *)ap_info[idx].ssid;
+        //string ssid = (char *)ap_info[idx].ssid;
+		std::string ssid = (char*)ap_info[idx].ssid;
 
         string authMode;
 
@@ -335,35 +451,94 @@ json WiFiConnect::Scan()
 json WiFiConnect::GetSettingsJson()
 {
     json jWifiSettings;
+
+    // Legacy fields
     jWifiSettings["ssid"] = this->ssid;
     jWifiSettings["password"] = this->password;
     jWifiSettings["enableAP"] = this->enableAP;
     jWifiSettings["maxPower"] = this->maxWifiPower;
+
+    // New fields
+    jWifiSettings["apSSID"] = this->apSSID;
+    jWifiSettings["apPassword"] = this->apPassword;
+    jWifiSettings["apMaxPower"] = this->apMaxPower;
+    jWifiSettings["staSSID"] = this->staSSID;
+    jWifiSettings["staPassword"] = this->staPassword;
+
+    // Only add configVersion if it is defined / valid
+    if (this->configVersion > 0)  
+    {
+        jWifiSettings["configVersion"] = this->configVersion;
+    }
 
     return jWifiSettings;
 }
 
 void WiFiConnect::SaveSettingsJson(json config)
 {
-    if (!config["ssid"].is_null() && config["ssid"].is_string())
+    // Check and assign AP SSID if present and is string
+    if (config.contains("apSSID") && config["apSSID"].is_string())
     {
-        this->ssid = config["ssid"];
+        this->apSSID = config["apSSID"];
     }
 
-    if (!config["password"].is_null() && config["password"].is_string())
+    // Check and assign AP Password
+    if (config.contains("apPassword") && config["apPassword"].is_string())
     {
-        this->password = config["password"];
+        this->apPassword = config["apPassword"];
     }
 
-    if (!config["enableAP"].is_null() && config["enableAP"].is_boolean())
+    // Check and assign AP Max Power (number expected)
+    if (config.contains("apMaxPower") && config["apMaxPower"].is_number())
+    {
+        this->apMaxPower = static_cast<int8_t>(config["apMaxPower"]);
+    }
+
+    // Check and assign STA SSID
+    if (config.contains("staSSID") && config["staSSID"].is_string())
+    {
+        this->staSSID = config["staSSID"];
+    }
+
+    // Check and assign STA Password
+    if (config.contains("staPassword") && config["staPassword"].is_string())
+    {
+        this->staPassword = config["staPassword"];
+    }
+
+    // Check and assign enableAP flag (boolean expected)
+    if (config.contains("enableAP") && config["enableAP"].is_boolean())
     {
         this->enableAP = config["enableAP"];
     }
 
-    if (!config["maxPower"].is_null() && config["maxPower"].is_number())
+    // Check and assign legacy single SSID (string)
+    if (config.contains("ssid") && config["ssid"].is_string())
     {
-        this->maxWifiPower = config["maxPower"];
+        this->ssid = config["ssid"];
     }
 
+    // Check and assign legacy password (string)
+    if (config.contains("password") && config["password"].is_string())
+    {
+        this->password = config["password"];
+    }
+
+    // Check and assign legacy maxPower (number)
+    if (config.contains("maxPower") && config["maxPower"].is_number())
+    {
+        this->maxWifiPower = static_cast<int8_t>(config["maxPower"]);
+    }
+
+    // Optionally assign configVersion if present
+    if (config.contains("configVersion") && config["configVersion"].is_number())
+    {
+        this->configVersion = static_cast<int>(config["configVersion"]);
+    }
+
+    // No need to map legacy fields to new ones here,
+    // since WiFiConnect::saveSettings() did it
+    
+    // Persist to storage
     this->saveSettings();
 }
