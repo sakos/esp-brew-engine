@@ -682,6 +682,16 @@ onMounted(() => {
   }, 3000);
 
   initChart();
+  
+  // SpeechSynthesis voice load (if they are not yet loaded)
+  const synth = window.speechSynthesis;
+  if (!synth.getVoices().length) {
+    // Start dummy utterance with silent wser to load voices 
+    const dummyUtterance = new SpeechSynthesisUtterance(" "); //not text
+    dummyUtterance.volume = 0; // to be silent
+    synth.speak(dummyUtterance);
+  }
+
 });
 
 onBeforeUnmount(() => {
