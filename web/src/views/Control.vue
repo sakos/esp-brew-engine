@@ -26,7 +26,7 @@ const appStore = useAppStore();
 const clientStore = useClientStore();
 
 const status = ref<string>();
-const prevStatus = ref<string>();
+const idleEntered = ref(false);
 const stirStatus = ref<string>();
 const temperature = ref<number>();
 const outputPercent = ref<number>();
@@ -42,6 +42,7 @@ const outputOverrides = ref<number>();
 const resetManualOutput = ref<boolean>();
 const resetManualTemp = ref<boolean>();
 const currentScheduleName = ref<string>();
+const labelYPos = ref<number>();
 
 
 const intervalId = ref<any>();
@@ -193,14 +194,13 @@ const chartAnnotations = computed(() => {
       type: "line",
       xMin: notificationTime,
       xMax: notificationTime,
+      yMax: labelYPos.value,     				// Position above 100 C not to overlap the temp line
       borderColor: "rgb(255, 99, 132)",
       borderWidth: 2,
       label: {
         content: notification.name,
-        drawTime: "afterDatasetsDraw",
+        position: "end",
         display: true,
-        yAdjust: -110,
-        position: "top",
       },
       click(context: any, event: any) {
         showNotificaton(notification, false);
@@ -387,6 +387,32 @@ const getRunningSchedule = async () => {
   lastRunningVersion.value = apiResult.data.version;
 };
 
+const resetAll = () => {
+  currentTemps.value = [];
+  executionSteps.value = [];
+  rawData.value = [];
+  notificationsShown.value = [];
+  setStartDateNow();
+};
+
+
+watch(status, (newStatus, oldStatus) => {
+  if (newStatus === "Idle" && oldStatus !== "Idle") {
+    idleEntered.value = true;  // Idle mode entered after schedule finished
+  }
+});
+
+watch(selectedMashSchedule, (newVal, oldVal) => {
+  currentTemps.value = [];		// delete temp history
+  setStartDateNow();			// reset chart start time
+  if (idleEntered.value) {
+    // Has effect only once after schedule was finished
+    resetAll();						// make chart update working again
+    idleEntered.value = false;		// only once
+  }
+});
+
+
 const getData = async () => {
   const requestData = {
     command: "Data",
@@ -401,7 +427,6 @@ const getData = async () => {
     return;
   }
 
-  prevStatus.value = status.value;
   status.value = apiResult.data.status;
   stirStatus.value = apiResult.data.stirStatus;
   temperature.value = apiResult.data.temp;
@@ -416,10 +441,10 @@ const getData = async () => {
   outputOverrides.value = apiResult.data.outputOverrides;
   resetManualOutput.value = apiResult.data.resetManualOutput;
   resetManualTemp.value = apiResult.data.resetManualTemp;
-  if (status.value !== 'Idle' || (status.value === 'Idle' && prevStatus.value !== 'Idle')) {
-	selectedMashSchedule.value = apiResult.data.currentScheduleName;
+  if (status.value !== 'Idle') {
+    const scheduleName = apiResult.data.currentScheduleName;
+    selectedMashSchedule.value = appStore.mashSchedules.find(ms => ms.name === scheduleName) || null;
   }
-  
 
   if (resetManualOutput.value) {
 	manualOverrideOutput.value = null;
@@ -549,11 +574,7 @@ const start = async () => {
   };
 
   // reset all our data so we can start over
-  currentTemps.value = [];
-  executionSteps.value = [];
-  rawData.value = [];
-  notificationsShown.value = [];
-  setStartDateNow();
+  resetAll();
 
   if (selectedMashSchedule.value != null) {
     requestData.data.selectedMashSchedule = selectedMashSchedule.value?.name;
@@ -676,6 +697,13 @@ const chartOptions = computed<any>(() => {
 onMounted(() => {
   // atm only used to render te schedule at the current time
   setStartDateNow();
+  
+  if (appStore.temperatureScale === TemperatureScale.Fahrenheit) {
+    labelYPos.value = 240;
+  } else {
+    labelYPos.value = 115;
+  }
+
 
   intervalId.value = setInterval(() => {
     getData();
