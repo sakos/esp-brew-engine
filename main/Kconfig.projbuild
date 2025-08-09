@@ -102,4 +102,10 @@ config InvertOutputs
         help
             Speaker 2 Pin
 
+     config ONEWIREPOWER
+        int "Onewire power Pin"
+        default 0
+        help
+            Onewire power Pin
+
 endmenu
