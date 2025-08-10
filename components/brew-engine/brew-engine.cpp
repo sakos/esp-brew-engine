@@ -1200,7 +1200,7 @@ void BrewEngine::loadSchedule()
 		auto newNotification = new Notification();
 		newNotification->name = notification->name;
 		newNotification->message = notification->message;
-	//	newNotification->timeFromStart = notification->timeAbsolute; // in minutes Not used.
+		newNotification->timeFromStart = notification->timeAbsolute; // in minutes
 		newNotification->timePoint = notificationTime;
 		newNotification->done = false;
 
@@ -1954,13 +1954,7 @@ void BrewEngine::controlLoop(void *arg)
 			{
 				// they are sorted so we just have to check the first one
 				noMoreNotification = false;
-				// Find the pending notification with the earliest timePoint
-				auto minIt = std::ranges::min_element(notDone, [](Notification* a, Notification* b) 
-					{
-						return a->timePoint < b->timePoint;
-					}
-				);
-				auto first = *minIt;
+				auto first = notDone.front();
 
 				if (now >= first->timePoint) 
 				{
