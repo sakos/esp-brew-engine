@@ -109,7 +109,7 @@ public:
     {
         // sort our notifications by time
         sort(this->notifications.begin(), this->notifications.end(), [](Notification *n1, Notification *n2)
-             { return (n1->timeFromStart < n2->timeFromStart); });
+             { return (n1->timeAbsolute < n2->timeAbsolute); });
     }
 
 protected:

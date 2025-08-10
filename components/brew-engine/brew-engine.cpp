@@ -264,7 +264,7 @@ void BrewEngine::calcNotificationTime()
 			}
 			else
 			{
-				notification->timeAbsolute = 0;		//It makes visible that the notification settings is wrong, no corresponding step was found
+				notification->timeAbsolute = sum - notification->timeFromStart;		//No matching step was found. Notification after end of previous step
 			}
 		}
     }
