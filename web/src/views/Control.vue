@@ -43,7 +43,7 @@ const resetManualOutput = ref<boolean>();
 const resetManualTemp = ref<boolean>();
 const currentScheduleName = ref<string>();
 const labelYPos = ref<number>();
-
+let audio: HTMLAudioElement | null = null;
 
 const intervalId = ref<any>();
 
@@ -719,12 +719,34 @@ onMounted(() => {
     dummyUtterance.volume = 0; // to be silent
     synth.speak(dummyUtterance);
   }
+  
+  // Start silent audio playback loop in the background to keep audio device open while screen gets locked
+  audio = new Audio("/silence.mp3");
+  audio.loop = true;
+  audio.muted = true;
+  audio.play().catch(() => {
+    const startAudio = () => {
+      audio?.play();
+      window.removeEventListener("click", startAudio);
+      window.removeEventListener("touchstart", startAudio);
+    };
+    window.addEventListener("click", startAudio, { once: true });
+    window.addEventListener("touchstart", startAudio, { once: true });
+  });
 
 });
 
 onBeforeUnmount(() => {
   clearAllNotificationTimeouts();
   clearInterval(intervalId.value);
+  
+  // Stop and release silent mp3 playback
+  if (audio) {
+    audio.pause();
+    audio.src = "";
+    audio = null;
+  }
+
 });
 
 const displayStatus = computed(() => {
