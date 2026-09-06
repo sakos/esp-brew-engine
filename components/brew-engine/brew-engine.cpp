@@ -1541,6 +1541,7 @@ void BrewEngine::pidLoop(void *arg)
 	pid.setMin(0);
 	pid.setMax(100);
 	pid.setMaxDelta(delta);
+	pid.setIWindow(2.0); // Set a 2.0 degree threshold window for the integral term
 	pid.debug = false;
 
 	uint totalWattage = 0;
@@ -1568,7 +1569,15 @@ void BrewEngine::pidLoop(void *arg)
 	{
 		instance->outputOverrides = std::nullopt;
 		// Output is %
-		int outputPercent = (int)pid.getOutput((double)instance->temperature, (double)instance->targetTemperature, (double)instance->peakTemperature, instance->hold);
+		// Pass the real-time loop duration (in seconds) to the PID calculator
+		double dt = (double)instance->pidLoopTime; 
+		int outputPercent = (int)pid.getOutput(
+			(double)instance->temperature, 
+			(double)instance->targetTemperature, 
+			(double)instance->peakTemperature, 
+			instance->hold, 
+			dt
+		);
 		instance->pidOrigOutput = outputPercent; // We keep the original PID valu in this variable and pidOutput shows the actual output
 		ESP_LOGD(TAG, "Pid Output: %d Target: %f", instance->pidOutput, instance->targetTemperature);
 

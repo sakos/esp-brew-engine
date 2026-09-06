@@ -6,138 +6,113 @@
 #ifndef INCLUDE_PIDCONTROLLER_HPP_
 #define INCLUDE_PIDCONTROLLER_HPP_
 
-#include <stdexcept>
-#include <iostream>
-using namespace std;
-using std::cout;
+#include <algorithm>
+#include <cmath>
+#include "esp_log.h"
 
 class PIDController
 {
-
 private:
     double previousError;
     double integral;
-    double previousActual;
-
-    double kp; // Proportional
-    double ki; // Integral
-    double kd; // Derivative
-    double max;
-    double min = 0;
-    double delta;
-
+    double kp; 
+    double ki; 
+    double kd; 
+    double maxOutput;
+    double minOutput;
+    double maxDelta;
+    double iWindow; // Integral tracking window in degrees (e.g., 2.0C)
     bool firstRun = true;
 
-    void addToIntegral(double i)
-    {
-        double newIntegral = integral + i;
-
-        integral = clamp(newIntegral, min, max);
-
-        if (debug)
-        {
-            cout << "new integral:" + to_string(integral) + "\n";
-        }
-    }
+    // --- FIX SCALING FACTORS FOR HUMAN-READABLE TUNING ---
+    // This allows the user to input normal numbers (e.g., I=0.5, D=25) 
+    // instead of micro-fractions or massive hundreds.
+    const double I_SCALE = 1.0 / 1000.0; // User input '1.0' becomes 0.001 internally
+    const double D_SCALE = 10.0;         // User input '1.0' becomes 10.0 internally
 
 public:
     bool debug = false;
 
     PIDController(double p, double i, double d)
     {
-/*        if (p == 0 || i == 0 || d == 0)
-        {
-            throw std::invalid_argument("K,I or P should not be empty!");
-        } */		
-		// On one hand zero parameter works, on the other hand, this exemption causes crash.
-
         this->kp = p;
-        this->ki = i;
-        this->kd = d;
-
-        previousError = 0.0;
-        integral = 0.0;
+        // Apply the internal scaling factor directly during initialization
+        this->ki = i * I_SCALE;
+        this->kd = d * D_SCALE;
+        this->previousError = 0.0;
+        this->integral = 0.0;
+        this->minOutput = 0.0;
+        this->maxOutput = 100.0;
+        this->maxDelta = 0.0;
+        this->iWindow = 2.0; // Default window: only integrate within 2 degrees of target
     }
 
-    void setMax(double max)
-    {
-        this->max = max;
-    }
+    void setMax(double max) { this->maxOutput = max; }
+    void setMin(double min) { this->minOutput = min; }
+    void setMaxDelta(double delta) { this->maxDelta = delta; }
+    void setIWindow(double window) { this->iWindow = window; }
 
-    void setMin(double min)
+    // dt: elapsed time since last execution in seconds (e.g., 20.0 or 30.0)
+    double getOutput(double actualorig, double setpoint, double peaktemp, bool inhold, double dt)
     {
-        this->min = min;
-    }
+        if (dt <= 0.0) dt = 1.0; // Safety fallback for invalid dt
 
-    void setMaxDelta (double delta)
-    {
-        this->delta = delta;
-    }
-
-    double getOutput(double actualorig, double setpoint, double peaktemp, bool inhold)
-    {
         double actual = actualorig;
-        if (peaktemp > setpoint)        // Increase average temp closer to highest to avoid overheat
+        if (peaktemp > setpoint) 
         {
             double weight = 0;
-            if (delta > 0.5)            // We need a minimum band to prevent sudden jump
+            if (maxDelta > 0.5) 
             {
-                weight = std::min (((peaktemp - setpoint) / delta), 1.0);
+                weight = std::min(((peaktemp - setpoint) / maxDelta), 1.0);
             }
-            
-            actual = weight * peaktemp + (1-weight) * actual;
+            actual = weight * peaktemp + (1.0 - weight) * actual;
         }
 
-        ESP_LOGI("PID tune", "PID actual: %f Target: %f peak %f weighted: %f", actualorig, setpoint, peaktemp, actual);
- 
-        previousActual = actual;
-
-        // Error
         double error = setpoint - actual;
-
-        // Proportional
+        
+        // 1. Proportional term (time-independent)
         double p = kp * error;
 
-        double i = 0;
-        double d = 0;
+        double i = 0.0;
+        double d = 0.0;
 
-        // skip i and d on first run
         if (!this->firstRun)
         {
-            if (ki > 0)
+            // 2. Integral term with conditional integration (iWindow) and true trapezoidal rule
+            if (ki > 0.0 && inhold && std::abs(error) <= iWindow)
             {
-                // Integral 10
-                addToIntegral(error);
+                // True trapezoidal integration: ((current_error + previous_error) / 2) * dt
+                integral += ((error + previousError) / 2.0) * dt;
 
-                if (inhold)
-                {
-                    i = ki * (integral / 2); // Trapezoidal integration
-                    i = clamp(i, min, max);
-                }
-                else
-                {
-                    integral = 0;       // Discard integral during heat step as it causes long overshoot
-                    i = 0;
-                }
+                // Anti-windup: Clamp the I-term contribution dynamically based on P-term output
+                double iMin = minOutput - p;
+                double iMax = maxOutput - p;
+                
+                // Calculate the unconstrained I-term value
+                i = ki * integral;
+                
+                // Clamp integral accumulator to prevent saturation beyond output limits
+                if (i < iMin) { i = iMin; integral = iMin / ki; }
+                if (i > iMax) { i = iMax; integral = iMax / ki; }
+            }
+            else
+            {
+                // Reset integral accumulator outside the window or during ramp phase
+                integral = 0.0;
+                i = 0.0;
             }
 
-            // Derivative
-            d = kd * (error - previousError);
+            // 3. Derivative term made time-independent (change in error / elapsed time)
+            d = kd * ((error - previousError) / dt);
         }
+
         previousError = error;
+        this->firstRun = false;
 
         double output = p + i + d;
+        output = std::clamp(output, minOutput, maxOutput);
 
-        if (debug)
-        {
-            cout << "p:" + to_string(p) + " i:" + to_string(i) + " d:" + to_string(d) + " output:" + to_string(output) + "\n";
-        }
-
-        ESP_LOGI("PID tune", "P: %f I: %f D: %f PID: %f", p, i, d, output);
-
-        output = clamp(output, min, max);
-
-        this->firstRun = false;
+        ESP_LOGI("PID tune", "P: %.2f | I: %.2f | D: %.2f | PID: %.2f (dt: %.1fs)", p, i, d, output, dt);
 
         return output;
     }
