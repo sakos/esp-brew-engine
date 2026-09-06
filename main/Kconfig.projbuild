@@ -91,16 +91,10 @@ config InvertOutputs
 
 			
      config SPEAKER1
-        int "Speaker1 Pin"
+        int "Speaker Pin"
         default 0
         help
-            Speaker 1 Pin
-
-     config SPEAKER2
-        int "Speaker2 Pin"
-        default 0
-        help
-            Speaker 2 Pin
+            Speaker  Pin
 
      config ONEWIREPOWER
         int "Onewire power Pin"

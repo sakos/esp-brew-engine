@@ -18,7 +18,6 @@ const systemSettings = ref<ISystemSettings>({
   mqttUri: "",
   temperatureScale: 0,
   speaker1Pin: 0,
-  speaker2Pin: 0,
   onewirePowerPin: 0,
 });
 
@@ -196,17 +195,6 @@ const scaleChanged = () => {
           <v-text-field v-model.number="systemSettings.speaker1Pin" :label='t("systemSettings.speaker1_pin")'>
             <template v-slot:append>
               <v-tooltip :text='t("systemSettings.speaker1_pin_tooltip")'>
-                <template v-slot:activator="{ props }">
-                  <v-icon size="small" v-bind="props">{{ mdiHelp }}</v-icon>
-                </template>
-              </v-tooltip>
-            </template>
-          </v-text-field>
-        </v-col>
-        <v-col cols="12" md="3">
-          <v-text-field v-model.number="systemSettings.speaker2Pin" :label='t("systemSettings.speaker2_pin")'>
-            <template v-slot:append>
-              <v-tooltip :text='t("systemSettings.speaker2_pin_tooltip")'>
                 <template v-slot:activator="{ props }">
                   <v-icon size="small" v-bind="props">{{ mdiHelp }}</v-icon>
                 </template>

@@ -59,18 +59,10 @@ void BrewEngine::Init()
 		gpio_set_level(this->buzzer_PIN, this->gpioLow);
 	}
 
-	if (!this->speaker1_PIN || !this->speaker2_PIN)
+	if (!this->speaker1_PIN)
 	{
-		ESP_LOGW(TAG, "Speaker (both) is not configured!");
-	}
-	else
-	{
-		gpio_reset_pin(this->speaker1_PIN);
-		gpio_set_direction(this->speaker1_PIN, GPIO_MODE_OUTPUT);
-		gpio_set_level(this->speaker1_PIN, 0);
-		gpio_reset_pin(this->speaker2_PIN);
-		gpio_set_direction(this->speaker2_PIN, GPIO_MODE_OUTPUT);
-		gpio_set_level(this->speaker2_PIN, 0);
+		ESP_LOGW(TAG, "Speaker output is not configured!");
+		// No need to preconfigure the pin to prevent conflict with LEDC
 	}
 
 	if (!this->onewirePower_PIN)
@@ -138,7 +130,6 @@ void BrewEngine::readSystemSettings()
 	this->buzzer_PIN = (gpio_num_t)this->settingsManager->Read("buzzerPin", (uint16_t)CONFIG_BUZZER);
 	this->buzzerTime = this->settingsManager->Read("buzzerTime", (uint8_t)2);
 	this->speaker1_PIN = (gpio_num_t)this->settingsManager->Read("speaker1Pin", (uint16_t)CONFIG_SPEAKER1);
-	this->speaker2_PIN = (gpio_num_t)this->settingsManager->Read("speaker2Pin", (uint16_t)CONFIG_SPEAKER2);
 	this->onewirePower_PIN = (gpio_num_t)this->settingsManager->Read("onewirePowerPin", (uint16_t)CONFIG_ONEWIREPOWER);
 
 	bool configInvertOutputs = false;
@@ -206,11 +197,6 @@ void BrewEngine::saveSystemSettingsJson(const json &config)
 	{
 		this->settingsManager->Write("speaker1Pin", (uint16_t)config["speaker1Pin"]);
 		this->speaker1_PIN = (gpio_num_t)config["speaker1Pin"];
-	}
-	if (!config["speaker2Pin"].is_null() && config["speaker2Pin"].is_number())
-	{
-		this->settingsManager->Write("speaker2Pin", (uint16_t)config["speaker2Pin"]);
-		this->speaker2_PIN = (gpio_num_t)config["speaker2Pin"];
 	}
 	if (!config["onewirePowerPin"].is_null() && config["onewirePowerPin"].is_number())
 	{
@@ -2032,7 +2018,7 @@ void BrewEngine::speaker(void *arg)
 	ESP_LOGI(TAG, "Speaker function started"); 
 
 
-	if ((instance->speaker1_PIN > 0) && (instance->speaker2_PIN > 0))
+	if (instance->speaker1_PIN > 0) 
 	{
 		ledc_timer_config_t ledc_timer = {};  // Zero-initialize the structure
 		ledc_timer.speed_mode = LEDC_LOW_SPEED_MODE;
@@ -2054,13 +2040,7 @@ void BrewEngine::speaker(void *arg)
 		ledc_channel1.flags.output_invert = 0;
 
 
-		ledc_channel_config_t ledc_channel2 = ledc_channel1;// Define 2nd PWM channel
-		ledc_channel2.channel        = LEDC_CHANNEL_1;
-		ledc_channel2.gpio_num       = instance->speaker2_PIN;  // First GPIO pin
-		ledc_channel2.hpoint         = 128;			//Shift half period instead of inverting.
-
 		ledc_channel_config(&ledc_channel1);
-		ledc_channel_config(&ledc_channel2);
 		
 		
 		for (int i = 0; i < instance->soundTime; i += 2*instance->soundBurst)
@@ -2068,18 +2048,15 @@ void BrewEngine::speaker(void *arg)
 		
 			//generate sound for burst time
 			// Sound volume is proportional to duty. Can be utilized later.
-			ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 64);
-			ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, 64);
+			ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 128);
 
 			ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
-			ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1);
 
 			vTaskDelay(instance->soundBurst  / portTICK_PERIOD_MS);
 			
 			//stop sound for same
 
 			ledc_stop(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 0);
-			ledc_stop(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, 0);
 
 			
 			vTaskDelay(instance->soundBurst  / portTICK_PERIOD_MS);
@@ -2454,7 +2431,6 @@ string BrewEngine::processCommand(const string &payLoad)
 			{"mqttUri", this->mqttUri},
 			{"temperatureScale", this->temperatureScale},
 			{"speaker1Pin", this->speaker1_PIN},
-			{"speaker2Pin", this->speaker2_PIN},
 			{"onewirePowerPin", this->onewirePower_PIN},
 		};
 	}
