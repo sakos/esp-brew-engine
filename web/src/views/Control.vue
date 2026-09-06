@@ -412,8 +412,13 @@ watch(selectedMashSchedule, (newVal, oldVal) => {
   }
 });
 
+let controller: AbortController | null = null;
 
 const getData = async () => {
+  // If there is a pending request, abort it
+  controller?.abort();
+  controller = new AbortController();
+
   const requestData = {
     command: "Data",
     data: {
@@ -421,7 +426,7 @@ const getData = async () => {
     },
   };
 
-  const apiResult = await webConn?.doPostRequest(requestData);
+  const apiResult = await webConn?.doPostRequest(requestData, { signal: controller.signal });
 
   if (apiResult === undefined || apiResult.success === false) {
     return;
