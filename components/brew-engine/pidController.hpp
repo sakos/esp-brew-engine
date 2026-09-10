@@ -20,8 +20,6 @@ private:
     double kd; 
     double maxOutput;
     double minOutput;
-    double maxDelta;
-    double iWindow; // Integral tracking window in degrees (e.g., 2.0C)
     bool firstRun = true;
 
     // --- FIX SCALING FACTORS FOR HUMAN-READABLE TUNING ---
@@ -43,30 +41,22 @@ public:
         this->integral = 0.0;
         this->minOutput = 0.0;
         this->maxOutput = 100.0;
-        this->maxDelta = 0.0;
-        this->iWindow = 2.0; // Default window: only integrate within 2 degrees of target
     }
 
+	
     void setMax(double max) { this->maxOutput = max; }
     void setMin(double min) { this->minOutput = min; }
-    void setMaxDelta(double delta) { this->maxDelta = delta; }
-    void setIWindow(double window) { this->iWindow = window; }
+    void setPID(double p, double i, double d)
+    {
+        this->kp = p;
+        this->ki = i * I_SCALE; 
+        this->kd = d * D_SCALE; 
+    }	
 
     // dt: elapsed time since last execution in seconds (e.g., 20.0 or 30.0)
-    double getOutput(double actualorig, double setpoint, double peaktemp, bool inhold, double dt)
+    double getOutput(double actual, double setpoint, bool inhold, double dt)
     {
         if (dt <= 0.0) dt = 1.0; // Safety fallback for invalid dt
-
-        double actual = actualorig;
-        if (peaktemp > setpoint) 
-        {
-            double weight = 0;
-            if (maxDelta > 0.5) 
-            {
-                weight = std::min(((peaktemp - setpoint) / maxDelta), 1.0);
-            }
-            actual = weight * peaktemp + (1.0 - weight) * actual;
-        }
 
         double error = setpoint - actual;
         
@@ -78,33 +68,56 @@ public:
 
         if (!this->firstRun)
         {
-            // 2. Integral term with conditional integration (iWindow) and true trapezoidal rule
-            if (ki > 0.0 && inhold && std::abs(error) <= iWindow)
+            // 2. Integral term with conditional integration and true trapezoidal rule
+            if (ki > 0.0 && inhold )
             {
                 // True trapezoidal integration: ((current_error + previous_error) / 2) * dt
                 integral += ((error + previousError) / 2.0) * dt;
-
-                // Anti-windup: Clamp the I-term contribution dynamically based on P-term output
-                double iMin = minOutput - p;
-                double iMax = maxOutput - p;
-                
-                // Calculate the unconstrained I-term value
-                i = ki * integral;
-                
-                // Clamp integral accumulator to prevent saturation beyond output limits
-                if (i < iMin) { i = iMin; integral = iMin / ki; }
-                if (i > iMax) { i = iMax; integral = iMax / ki; }
-            }
+				
+				i = ki * integral;
+				
+                // Anti-windup: Clamp the I-term 
+                // Tight negative limit to ensure fast recovery when temperature drops
+                if (i < -15.0) 
+                { 
+                    i = -15.0; 
+                    integral = -15.0 / ki; 
+                }
+                // Standard upper limit for maximum physical output
+                if (i > maxOutput) 
+                { 
+                    i = maxOutput; 
+                    integral = maxOutput / ki; 
+                }   
+			}		
             else
             {
-                // Reset integral accumulator outside the window or during ramp phase
+                // Reset integral accumulator during ramp phase
                 integral = 0.0;
                 i = 0.0;
             }
 
-            // 3. Derivative term made time-independent (change in error / elapsed time)
-            d = kd * ((error - previousError) / dt);
-        }
+			// 3. Derivative term with dynamic error-dependent scaling
+			double raw_d = kd * ((error - previousError) / dt);
+			
+			// Calculate absolute values for safe magnitude comparison
+			double abs_error = std::abs(error);
+			double abs_change = std::abs(error - previousError);
+
+			// Default scaling factor is 1.0 (full braking)
+			double d_scale = 1.0;
+
+			// If the change rate is smaller than the distance to target, 
+			// damp the derivative brake proportionally.
+			if (abs_error > 0.0 && abs_change < abs_error)
+			{
+				d_scale = abs_change / abs_error;
+			}
+
+			// Apply the sign-safe scaling factor to the D-term
+			d = raw_d * d_scale;
+
+		}
 
         previousError = error;
         this->firstRun = false;

@@ -300,6 +300,15 @@ const chartData = computed(() => {
       y: temp.temp,
     }));
 
+    // Find the very last temperature value from this sensor's history
+    let currentSensorValueText = "";
+    if (extraSet.temps.length > 0) {
+      // Get the last item in the temps array
+      const lastTempRecord = extraSet.temps[extraSet.temps.length - 1];
+      // Format to 2 decimal places to match the C++ precision
+      currentSensorValueText = ` (${lastTempRecord.temp.toFixed(2)}°)`;
+    }
+
     let label = extraSet.sensor;
     let { color } = extraSet;
     const sensor = tempSensors.value.find((s) => s.id === extraSet.sensor);
@@ -309,8 +318,11 @@ const chartData = computed(() => {
       color = sensor.color;
     }
 
+    // Append the current live temperature directly to the label text
+    const dynamicLabel = `${label}${currentSensorValueText}`;
+
     const dataset = {
-      label,
+      label: dynamicLabel, // Updated with the live value
       backgroundColor: color,
       borderColor: color,
       lineWidth: 0.2,

@@ -85,6 +85,7 @@ void BrewEngine::Init()
 
 	// this->initOneWire();
 
+	busBusy = false;
 	this->detectOnewireTemperatureSensors();
 
 	this->initMqtt();
@@ -307,16 +308,16 @@ void BrewEngine::readSettings()
 	this->pidLoopTime = this->settingsManager->Read("pidLoopTime", (uint16_t)CONFIG_PID_LOOPTIME);
 //	this->stepInterval = this->settingsManager->Read("stepInterval", (uint16_t)CONFIG_PID_LOOPTIME); // we use same as pidloop time
 
-	this->boostModeUntil = this->settingsManager->Read("boostModeUntil", (uint8_t)this->boostModeUntil);
+	uint16_t bmuint = this->settingsManager->Read("boostModeUntil", (uint16_t)(this->boostModeUntil * 10));
+	this->boostModeUntil = (double)bmuint / 10;
+
 	this->heaterLimit = this->settingsManager->Read("heaterLimit", (uint8_t)this->heaterLimit);
 //	this->heaterCycles = this->settingsManager->Read("heaterCycles", (uint8_t)this->heaterCycles);
 	this->relayGuard = this->settingsManager->Read("relayGuard", (uint8_t)this->relayGuard);
 
-	uint16_t mdeltaint = this->settingsManager->Read("delta", (uint16_t)(this->mashDelta * 10));
-	uint16_t bdeltaint = this->settingsManager->Read("boildelta", (uint16_t)(this->boilDelta * 10));
+	uint16_t mdeltaint = this->settingsManager->Read("delta", (uint16_t)(this->maxDelta * 10));
 
-	this->mashDelta = (double)mdeltaint / 10;
-	this->boilDelta = (double)bdeltaint / 10;
+	this->maxDelta = (double)mdeltaint / 10;
 
 }
 
@@ -411,15 +412,15 @@ void BrewEngine::savePIDSettings()
 
 	this->settingsManager->Write("pidLoopTime", this->pidLoopTime);
 
-	this->settingsManager->Write("boostModeUntil", this->boostModeUntil);
+	uint16_t bmuint = static_cast<uint16_t>(this->boostModeUntil * 10);
+	this->settingsManager->Write("boostModeUntil", bmuint);
+
 	this->settingsManager->Write("heaterLimit", this->heaterLimit);
 	this->settingsManager->Write("relayGuard", this->relayGuard);
 
-	uint16_t mdeltaint = static_cast<uint16_t>(this->mashDelta * 10);
-	uint16_t bdeltaint = static_cast<uint16_t>(this->boilDelta * 10);
+	uint16_t mdeltaint = static_cast<uint16_t>(this->maxDelta * 10);
 
 	this->settingsManager->Write("delta", mdeltaint);
-	this->settingsManager->Write("boildelta", bdeltaint);
 
 
 	ESP_LOGI(TAG, "Saving PID Settings Done");
@@ -880,11 +881,23 @@ void BrewEngine::initMqtt()
 void BrewEngine::detectOnewireTemperatureSensors()
 {
 
-	// we need to temp stop our temp read loop while we change the sensor data
+	// 1. Request the read loop to stop at the next check point
 	this->skipTempLoop = true;
-	vTaskDelay(pdMS_TO_TICKS(2000));  // Wait for ongoing onewire activities to complete.
 	
-	// Meanwhile waiting do a onewire power reset because DS18B20 sensor can get stuck caused by glitches triggered by powerline spikes at relay switches
+	// 2. Dynamic barrier: Wait until the read loop explicitly confirms it released the hardware bus
+	int timeout_counter = 0;
+	while (this->busBusy && timeout_counter < 60) // Check every 100ms, max 6 seconds safety window
+	{
+		vTaskDelay(pdMS_TO_TICKS(100));
+		timeout_counter++;
+	}
+
+	if (timeout_counter >= 60)
+	{
+		ESP_LOGW(TAG, "Sensor detection warning: readLoop busBusy flag timed out. Proceeding under risk.");
+	}
+	
+	// 3. NOW it is akmost 100% safe to clear memory, perform power reset, and delete the 1-Wire bus
 	if (this->onewirePower_PIN > 0)
 	{
 		ESP_LOGI(TAG, "initOneWire: Power reset");		//Do onewire init as well every time. 
@@ -1350,55 +1363,98 @@ void BrewEngine::readLoop(void *arg)
 {
 	BrewEngine *instance = (BrewEngine *)arg;
 
-	int it = 4; 	//to start with logging after 1s
+	int it = 4; 	// to start with logging after 1s
 	int lastTemp = 0;
 	bool needed = false;
 	bool working = false;
 
+
+	// Flag to force an immediate temperature jump after skipping the loop
+	bool afterSkipReset = false;
+
 	while (instance->run)
 	{
-		vTaskDelay(pdMS_TO_TICKS(1000));
-
+		// Strict base delay between measurement cycles
+		vTaskDelay(pdMS_TO_TICKS(500));
+		
 		// When we are changing temp settings we temporarily need to skip our temp loop
 		if (instance->skipTempLoop)
 		{
+			instance->busBusy = false; // Ensure bus is marked free if we skip the iteration
+			afterSkipReset = true;     // Arm the reset flag to bypass filtering on the next active run
 			continue;
 		}
 
-		int nrOfSensors = 0;
-		float sum = 0.0;
-		float peak = 0.0;
-		needed = false;			// Onewire failure can happen only if there is at least one sensor configured
+		bool loopAborted = false;
+		instance->busBusy = true; // Mark onewire bus is locked
+		needed = false;		      // Onewire failure can happen only if there is at least one sensor configured	
 		working = false;		
 
+		// Temporary structure to hold validated data for control sensors
+		struct ValidControlSensor {
+			float temp;
+			float rawTemp; // Celsius before compensation and Fahrenheit conversion
+		};
+		std::vector<ValidControlSensor> validControlSensors;
+		float peak = -999.0f; 
+
+		// Single, consolidated loop for both conversion and reading
 		for (auto &[key, sensor] : instance->sensors)
 		{
-			float temperature;
-			ds18b20_device_handle_t handle = sensor->handle;
-			string stringId = std::to_string(key);
-
-			// not useForControl, continue
 			if (!sensor->handle)
 			{
-				ESP_LOGD(TAG, "Not present at onewire init [%s], skip", stringId.c_str());
+				ESP_LOGW(TAG, "Sensor ID [%lld] not present before onewire init, skip", (unsigned long long)key);
 				continue;
 			}
-			
-			needed = true;	// This sensor was detected and should work
-			
-			esp_err_t err = ds18b20_trigger_temperature_conversion(handle);
 
+			needed = true; // This sensor was detected before and should work
+
+			ds18b20_device_handle_t handle = sensor->handle;
+			string stringId = std::to_string(key);
+			esp_err_t err = ESP_FAIL;
+
+			// Step 1: Trigger conversion with up to 3 attempts, 15ms delay between retries
+			for (int retry = 0; retry < 3; retry++)
+			{
+				if (instance->skipTempLoop)
+				{
+					loopAborted = true;
+					break;
+				}
+				err = ds18b20_trigger_temperature_conversion(handle);
+				if (err == ESP_OK)
+				{
+					break;
+				}
+				if (retry < 2)
+				{
+					vTaskDelay(pdMS_TO_TICKS(15));
+				}
+			}
+			
+			if (loopAborted) break;
+
+			// If conversion failed after all retries, skip this sensor immediately
 			if (err != ESP_OK)
 			{
-				ESP_LOGW(TAG, "Error Reading from [%s], skipping sensor!", stringId.c_str());
+				ESP_LOGW(TAG, "Failed to trigger conversion for [%s] after 3 attempts, skipping!", stringId.c_str());
 				sensor->connected = false;
 				sensor->lastTemp = 0;
 				instance->currentTemperatures.erase(key);
 				continue;
-			};
+			}
 
+			// CHECK 2: Before entering the blocking internal read delay
+			if (instance->skipTempLoop)
+			{
+				loopAborted = true;
+				break;
+			}
+
+			// Step 2: Single measurement read (No retries here to prevent major timing lags)
+			float temperature;
 			err = ds18b20_get_temperature(handle, &temperature);
-
+			
 			if (err != ESP_OK)
 			{
 				ESP_LOGW(TAG, "Error Reading temp from [%s], skipping sensor!", stringId.c_str());
@@ -1408,20 +1464,47 @@ void BrewEngine::readLoop(void *arg)
 				continue;
 			};
 			
-			sensor->connected = true; 	// sensor is present or back
-			working = true; 		// At least one detected sensor is working
-			
+			sensor->connected = true; 	
+			working = true; 		
 
+			// --- Rule 1 & 2: Raw Celsius based error filtering ---
+			float rawCelsius = temperature; 
 
-			// conversion needed
+			// Discard if temperature is strictly over 102C
+			if (rawCelsius > 127.0f)
+			{
+				ESP_LOGW(TAG, "Sensor [%s] read over 127°C (%.2f°C). Discarding floating data line error read!", stringId.c_str(), rawCelsius);
+				continue; 
+			}
+
+			// Handle the exactly 85C power-on reset bug
+			if (std::abs(rawCelsius - 85.0f) < 0.01f)
+			{
+				// If lastCalculatedAvg is exactly 0.0 (system just booted), 
+				// we STRICTLY DISCARD 85.0°C as it's a 99.9% guarantee to be a power-on reset bug.
+				if (instance->lastCalculatedAvg == 0.0)
+				{
+					ESP_LOGW(TAG, "Sensor [%s] read exactly 85°C on initial boot cycle. Discarding power-on bug!", stringId.c_str());
+					continue; 
+				}
+				// If previous average exists and is far from 85C (e.g., > 5C), treat 85C as a bug.
+				// Both rawCelsius and lastCalculatedAvg are compared strictly in Celsius.
+				if (instance->lastCalculatedAvg != 0.0 && std::abs(instance->lastCalculatedAvg - 85.0) > 5.0)
+				{
+					ESP_LOGW(TAG, "Sensor [%s] read exactly 85°C, power-on reset bug suspected. Discarding!", stringId.c_str());
+					continue; 
+				}
+			}
+
+			// Conversion to Fahrenheit if needed
 			if (instance->temperatureScale == Fahrenheit)
 			{
-				temperature = (temperature * 1.8) + 32;
+				temperature = (temperature * 1.8f) + 32.0f;
 			}
 
 			ESP_LOGD(TAG, "temperature read from [%s]: %.2f°", stringId.c_str(), temperature);
 
-			// apply compensation
+			// Apply compensations
 			if (sensor->compensateAbsolute != 0)
 			{
 				temperature = temperature + sensor->compensateAbsolute;
@@ -1431,42 +1514,143 @@ void BrewEngine::readLoop(void *arg)
 				temperature = temperature * sensor->compensateRelative;
 			}
 
+			// Save to sensor structure and GUI map
+			sensor->lastTemp = temperature;
+			if (sensor->show)
+			{
+				instance->currentTemperatures.insert_or_assign(key, sensor->lastTemp);
+			}
+
+			// If used for control, store for the weighted average calculation
 			if (sensor->useForControl)
 			{
-				sum += temperature;
-				nrOfSensors++;
+				validControlSensors.push_back({temperature, rawCelsius});
 				if (temperature > peak)
 				{
 					peak = temperature;
 				}
 			}
-
-			sensor->lastTemp = temperature;
-
-			// we also add our temps to a map individualy, might be nice to see bottom and top temp in gui
-			if (sensor->show)
-			{
-				instance->currentTemperatures.insert_or_assign(key, sensor->lastTemp);
-			}
 		}
-		
 
-		float avg = 0;
+		if (loopAborted) continue;
+		
+		// --- Rule 3: Weighted average calculation ---
+		float avg = 0.0f;
+		int nrOfSensors = validControlSensors.size();
+
 		if (nrOfSensors > 0) 
 		{
-			avg = sum / nrOfSensors;
+			if (nrOfSensors == 1)
+			{
+				avg = validControlSensors[0].temp;
+			}
+			else
+			{
+				// OPTIMIZATION: Use the 'peak' value directly as max_t, no need to find it again
+				float max_t = peak;
+				double total_weight = 0.0;
+				double weighted_sum = 0.0;
+
+				for (const auto& s : validControlSensors)
+				{
+					double weight = 1.0; 
+
+					if (instance->maxDelta > 0.0)
+					{
+						double distance_from_max = static_cast<double>(max_t - s.temp);
+						double penalty_ratio = distance_from_max / instance->maxDelta; 
+						weight = 1.0 - penalty_ratio;
+						if (weight < 0.0) weight = 0.0; 
+					}
+
+					weighted_sum += static_cast<double>(s.temp) * weight;
+					total_weight += weight;
+				}
+
+				if (total_weight > 0.0)
+				{
+					avg = static_cast<float>(weighted_sum / total_weight);
+				}
+				else
+				{
+					avg = max_t; 
+				}
+			}
+
+			// --- Rule 4: Integrator filter (Calculated strictly in Celsius) ---
+			float avgInCelsius = avg;
+			if (instance->temperatureScale == Fahrenheit)
+			{
+				avgInCelsius = (avg - 32.0f) / 1.8f;
+			}
+
+			// Static variables to track elapsed time between successful loops
+			static int64_t last_execution_time = 0;
+			int64_t current_time = esp_timer_get_time(); // High-precision hardware time in microseconds
+			double dt = 1.0;
+
+			if (last_execution_time != 0)
+			{
+				dt = static_cast<double>(current_time - last_execution_time) / 1000000.0;
+			}
+
+			// Run the integrator only if there is a history AND we are not recovering from a skipTempLoop
+			if (instance->lastCalculatedAvg != 0.0 && last_execution_time != 0 && !afterSkipReset)
+			{
+				// Safety check: if dt is anomalous, default to 1.0s
+				if (dt <= 0.0 || dt > 10.0) dt = 1.0;
+
+				// Scale the allowed change by the actual physical time that passed
+				double dynamic_max_change = instance->MAX_ALLOWED_CHANGE * dt;
+
+				// Calculate absolute allowed window boundaries based on history
+				double min_allowed = instance->lastCalculatedAvg - dynamic_max_change;
+				double max_allowed = instance->lastCalculatedAvg + dynamic_max_change;
+
+				// Check and limit both upward jumps and downward drops
+				if (avgInCelsius > max_allowed) 
+				{
+					avgInCelsius = static_cast<float>(max_allowed);
+					ESP_LOGW(TAG, "Temperature upward jump blocked. Limited to: %.2f°C", avgInCelsius);
+				}
+				else if (avgInCelsius < min_allowed) 
+				{
+					avgInCelsius = static_cast<float>(min_allowed);
+					ESP_LOGW(TAG, "Temperature downward drop blocked. Limited to: %.2f°C", avgInCelsius);
+				}
+			}
+			else if (afterSkipReset)
+			{
+				// Log that we are performing a clean jump to the new temperature
+				ESP_LOGI(TAG, "Read loop resumed. Bypassing filter to sync instantly with val: %.2f°C", avgInCelsius);
+				afterSkipReset = false; // Reset the flag so filtering resumes in the next cycle
+			}
+			
+
+			// Update timestamp and history for the next cycle
+			last_execution_time = current_time;
+			instance->lastCalculatedAvg = static_cast<double>(avgInCelsius);
+
+			// Overwrite 'avg' with the filtered value, converted to the requested scale
+			if (instance->temperatureScale == Fahrenheit)
+			{
+				avg = (avgInCelsius * 1.8f) + 32.0f;
+			}
+			else
+			{
+				avg = avgInCelsius;
+			}
+			// Log and update variables
+			ESP_LOGD(TAG, "Avg Temperature: %.2f°", avg);
+
+			instance->temperature = avg;
 		}
 
-		ESP_LOGD(TAG, "Avg Temperature: %.2f°", avg);
 
-		instance->temperature = avg;
-		instance->peakTemperature = peak;
 
-		// when controlrun is true we need to keep out data
+		// Logging and MQTT section (unchanged)
 		if (instance->controlRun)
 		{
-			// we don't have that much ram so we log only every 5 cycles
-
 			it++;
 			if (it > 5)
 			{
@@ -1478,13 +1662,10 @@ void BrewEngine::readLoop(void *arg)
 					lastTemp = lastValue->second;
 				}
 
-				if ((lastTemp < (int)avg ) || (lastTemp > (int)(avg+0.9)) || (instance->tempLog.empty()))		//histeresis
+				if ((lastTemp < (int)avg ) || (lastTemp > (int)(avg+0.9)) || (instance->tempLog.empty()))		
 				{
-					// decided agains chrono just make it a hell lot more complex
-					// instance->tempLog.insert(std::make_pair(std::chrono::system_clock::now(), (int)avg));
 					time_t current_raw_time = time(0);
-					// System time: number of seconds since 00:00,
-					instance->tempLog.insert(std::make_pair(current_raw_time, (int)(avg)));  //round
+					instance->tempLog.insert(std::make_pair(current_raw_time, (int)(avg)));  
 
 					ESP_LOGI(TAG, "Logging: %d° at date: %lld", (int)(avg) , current_raw_time);
 				}
@@ -1507,11 +1688,13 @@ void BrewEngine::readLoop(void *arg)
 				esp_mqtt_client_publish(instance->mqttClient, instance->mqttTopic.c_str(), payload.c_str(), 0, 1, 1);
 			}
 		}
+
 		if (needed && !working)
 		{
 			ESP_LOGI(TAG, "All detected sensors are lost, reinit onewire");
 			instance->detectOnewireTemperatureSensors();
 			vTaskDelay(pdMS_TO_TICKS(1000));
+			instance->lastCalculatedAvg = 0.0; 
 		}
 	}
 	vTaskDelete(NULL);
@@ -1521,27 +1704,14 @@ void BrewEngine::pidLoop(void *arg)
 {
 	BrewEngine *instance = (BrewEngine *)arg;
 
-	double kP, kI, kD, delta;
-	if (instance->boilRun)
-	{
-		kP = instance->boilkP;
-		kI = instance->boilkI;
-		kD = instance->boilkD;
-		delta = instance->boilDelta;
-	}
-	else
-	{
-		kP = instance->mashkP;
-		kI = instance->mashkI;
-		kD = instance->mashkD;
-		delta = instance->mashDelta;
-	}
+	PIDController pid(
+		instance->boilRun ? instance->boilkP : instance->mashkP,
+		instance->boilRun ? instance->boilkI : instance->mashkI,
+		instance->boilRun ? instance->boilkD : instance->mashkD
+	);
 
-	PIDController pid(kP, kI, kD);
 	pid.setMin(0);
 	pid.setMax(100);
-	pid.setMaxDelta(delta);
-	pid.setIWindow(2.0); // Set a 2.0 degree threshold window for the integral term
 	pid.debug = false;
 
 	uint totalWattage = 0;
@@ -1574,11 +1744,10 @@ void BrewEngine::pidLoop(void *arg)
 		int outputPercent = (int)pid.getOutput(
 			(double)instance->temperature, 
 			(double)instance->targetTemperature, 
-			(double)instance->peakTemperature, 
-			instance->hold, 
+			instance->inIwindow, 
 			dt
 		);
-		instance->pidOrigOutput = outputPercent; // We keep the original PID valu in this variable and pidOutput shows the actual output
+		instance->pidOrigOutput = outputPercent; // We keep the original PID value in this variable and pidOutput shows the actual output
 		ESP_LOGD(TAG, "Pid Output: %d Target: %f", instance->pidOutput, instance->targetTemperature);
 
 		// Manual override and boost
@@ -1709,6 +1878,16 @@ void BrewEngine::pidLoop(void *arg)
 			{
 				ESP_LOGI(TAG, "Reset Pid Timer");
 				instance->resetPitTime = false;
+				// update PID parameters as well.
+				if (instance->boilRun)
+				{
+					pid.setPID(instance->boilkP, instance->boilkI, instance->boilkD);
+				}
+				else
+				{
+					pid.setPID(instance->mashkP, instance->mashkI, instance->mashkD);
+				}
+				
 				break;
 			}
 
@@ -1811,6 +1990,7 @@ void BrewEngine::controlLoop(void *arg)
 			instance->resetManualOutput = true; // Clear manual inputs
 			instance->resetManualTemp = true; // Clear manual inputs
 			instance->boostStatus = Off; // disable boost. could be set right in next cycle. No problem, PID reset is delayed anyway.
+			instance->inIwindow = false; //Disable I tag in PID controller
 			resetPIDNextStep = true;	// We reset PID anyway
 
 
@@ -1850,6 +2030,7 @@ void BrewEngine::controlLoop(void *arg)
 					instance->currentStepName = currentStep->stepName; 
 					instance->targetTemperature = currentStep->temperature;  //
 					instance->hold = true;
+					instance->inIwindow = true; //Enable I tag in PID controller
 				}
 				else
 				{
@@ -1901,20 +2082,23 @@ void BrewEngine::controlLoop(void *arg)
 					//instance->targetTemperature = currentStep->temperature;  // Percentage is replaced with instant target
 				}
 			}
+			
+			instance->inIwindow = (instance->temperature >= (instance->targetTemperature - instance->boostModeUntil)); 
+			// no need to check if boostModeUntil is zero. If target temp reached, I tag can be activated anyway.
 
 			// Handle boost mode		
 			if (currentStep->allowBoost)
 			{
-				boostUntil = (uint)(currentStep->temperature * (float)instance->boostModeUntil / 100);
+				boostUntil = (uint)(currentStep->temperature - instance->boostModeUntil);
 
-				if (instance->boostStatus == Off && instance->temperature < boostUntil)
+				if (instance->boostStatus == Off && (instance->temperature < boostUntil) && (instance->boostModeUntil > 0.05) ) 
 				{
 					ESP_LOGI(TAG, "Boost Start Until: %d", boostUntil);
 					instance->logRemote("Boost Start");
 					instance->boostStatus = Boost;
 					resetPIDNextStep = true;
 				}
-				else if (instance->boostStatus == Boost && instance->temperature >= boostUntil)
+				else if (instance->boostStatus == Boost && (instance->temperature >= boostUntil || (instance->boostModeUntil < 0.1)))
 				{
 					// Go immediatelly to boost off
 					ESP_LOGI(TAG, "Boost End");
@@ -2338,8 +2522,7 @@ string BrewEngine::processCommand(const string &payLoad)
 			{"boostModeUntil", this->boostModeUntil},
 			{"heaterLimit", this->heaterLimit},
 			{"relayGuard", this->relayGuard},
-			{"delta", this->mashDelta},
-			{"boildelta", this->boilDelta},
+			{"delta", this->maxDelta},
 		};
 	}
 	else if (command == "SavePIDSettings")
@@ -2351,12 +2534,13 @@ string BrewEngine::processCommand(const string &payLoad)
 		this->boilkI = data["boilkI"].get<double>();
 		this->boilkD = data["boilkD"].get<double>();
 		this->pidLoopTime = data["pidLoopTime"].get<uint16_t>();
-		this->boostModeUntil = data["boostModeUntil"].get<uint8_t>();
+		this->boostModeUntil = data["boostModeUntil"].get<double>();
 		this->heaterLimit = data["heaterLimit"].get<uint8_t>();
 		this->relayGuard = data["relayGuard"].get<uint8_t>();
-		this->mashDelta = data["delta"].get<double>();
-		this->boilDelta = data["boildelta"].get<double>();
+		this->maxDelta = data["delta"].get<double>();
 		this->savePIDSettings();
+		this->resetPitTime = true; 			// restart PID loop with the updated values
+
 	}
 	else if (command == "GetTempSettings")
 	{

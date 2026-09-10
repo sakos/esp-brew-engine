@@ -29,6 +29,7 @@
 
 #include "onewire_bus.h"
 #include "ds18b20.h"
+#include "esp_timer.h"
 
 #include "mqtt_client.h"
 
@@ -126,7 +127,6 @@ private:
     TemperatureScale temperatureScale = Celsius;
     float temperature = 0;                                         // average temp, we use float beceasue ds18b20_get_temperature returns float, no point in going more percise
     float targetTemperature = 0;                                   // requested temp
-    float peakTemperature = 0;                                   // Highest sensor temperature
     std::optional<float> overrideTargetTemperature = std::nullopt; // manualy overwritten temp
     std::map<uint64_t, float> currentTemperatures;                 // map with last temp for each sensor
     std::map<time_t, int8_t> tempLog;                              // integer log of averages, only used to show running history on web
@@ -146,14 +146,15 @@ private:
     double boilkI = 2;
     double boilkD = 2;
 
-    double mashDelta = 0;
-    double boilDelta = 0;
+    double maxDelta = 0;
+	double lastCalculatedAvg = 0.0f;  					// Stores the previous cycle's filtered temperature average in Celsius
+	static constexpr double MAX_ALLOWED_CHANGE = 0.15; 	// Max temperature change allowed per second in Celsius
 
-    uint16_t pidLoopTime = 60; // time in seconds for a full loop,
-    bool resetPitTime = false; // bool to reset pit , we do this when out target changes
-    float const tempMargin = 0.5;    // we don't want to nitpick about 0.5°C, water heating is not that percise
+    uint16_t pidLoopTime = 60; 							// time in seconds for a full loop,
+    bool resetPitTime = false; 							// bool to reset pit , we do this when out target changes
+    float const tempMargin = 0.5;    					// we don't want to nitpick about 0.5°C, water heating is not that percise
 
-    uint8_t boostModeUntil = 85;
+    double boostModeUntil = 5;
 	uint8_t heaterLimit = 100;
 	uint8_t relayGuard = 3;
 	
@@ -163,9 +164,11 @@ private:
     bool controlRun = false;   // true when a program is running
     bool boilRun = false;      // true when a boil schedule  is running
     bool skipTempLoop = false; // When we are changing temp settings we temporarily need to skip our temp loop
+    bool busBusy = false; 		// TRUE strictly when the temp readLoop is actively using the 1-Wire hardware bus
     bool restRun = false;   // true when a program is completed but notifications are remaining
     bool hold = false;   // true when a program schedule execution is in hold phase, false when it is in ramp.
-    BoostStatus boostStatus;   // Status of boost
+    bool inIwindow = false;   // true when a program schedule execution is close to hold and Integration component can be activated.
+   BoostStatus boostStatus;   // Status of boost
 
     bool inOverTime = false; // when a step time isn't reached we go in overtime, we need this to know that we need recalcualtion
 	const uint8_t overTimeTrigger = 8; // Time in seconds before step ends to pretrigger overtime. 0 would prevent notification delay, sporadic fault with 5.
