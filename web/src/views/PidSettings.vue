@@ -15,11 +15,10 @@ const pidSettings = ref<IPidSettings>({
   boilkI: 0,
   boilkD: 0,
   pidLoopTime: 60,
-  stepInterval: 60,
-  boostModeUntil: 85,
+  boostModeUntil: 5,
   heaterLimit: 100,
-  heaterCycles: 1,
   relayGuard: 5,
+  delta: 0,
 });
 
 const getData = async () => {
@@ -77,12 +76,15 @@ const save = async () => {
           </v-text-field>
         </v-col>
       </v-row>
+	  
+      <v-divider :thickness="7" />
 
-      <v-row>
+      <v-row class="mt-4 mb-2">
+	    <!-- Peak Delta Parameter -->
         <v-col cols="12" md="3">
-          <v-text-field type="number" v-model.number="pidSettings.stepInterval" :label="$t('pidSettings.stepInterval')">
+          <v-text-field type="number" v-model.number="pidSettings.delta" :label="$t('pidSettings.delta')">
             <template v-slot:append>
-              <v-tooltip :text="$t('pidSettings.stepInterval_tooltip')">
+              <v-tooltip :text="$t('pidSettings.delta_tooltip')">
                 <template v-slot:activator="{ props }">
                   <v-icon size="small" v-bind="props">{{ mdiHelp }}</v-icon>
                 </template>
@@ -92,35 +94,95 @@ const save = async () => {
         </v-col>
       </v-row>
 
+
       <div class="text-subtitle-2 mt-4 mb-2">{{ $t('pidSettings.mash') }}</div>
 
       <v-divider :thickness="7" />
 
       <v-row class="mt-4 mb-2">
+        <!-- P Parameter -->
         <v-col cols="12" md="3">
-          <v-text-field type="number" v-model.number="pidSettings.kP" label="P" />
+          <v-text-field type="number" v-model.number="pidSettings.kP" :label="$t('pidSettings.kP')" >
+            <template v-slot:append>
+              <v-tooltip :text="$t('pidSettings.kP_tooltip')">
+                <template v-slot:activator="{ props }">
+                  <v-icon size="small" v-bind="props">{{ mdiHelp }}</v-icon>
+                </template>
+              </v-tooltip>
+            </template>
+          </v-text-field>
         </v-col>
+
+        <!-- I Parameter -->
         <v-col cols="12" md="3">
-          <v-text-field type="number" v-model.number="pidSettings.kI" label="I" />
+          <v-text-field type="number" v-model.number="pidSettings.kI" :label="$t('pidSettings.kI')">
+            <template v-slot:append>
+              <v-tooltip :text="$t('pidSettings.kI_tooltip')">
+                <template v-slot:activator="{ props }">
+                  <v-icon size="small" v-bind="props">{{ mdiHelp }}</v-icon>
+                </template>
+              </v-tooltip>
+            </template>
+          </v-text-field>
         </v-col>
+
+        <!-- D Parameter -->
         <v-col cols="12" md="3">
-          <v-text-field type="number" v-model.number="pidSettings.kD" label="D" />
+          <v-text-field type="number" v-model.number="pidSettings.kD" :label="$t('pidSettings.kD')">
+            <template v-slot:append>
+              <v-tooltip :text="$t('pidSettings.kD_tooltip')">
+                <template v-slot:activator="{ props }">
+                  <v-icon size="small" v-bind="props">{{ mdiHelp }}</v-icon>
+                </template>
+              </v-tooltip>
+            </template>
+          </v-text-field>
         </v-col>
       </v-row>
+	  
 
       <div class="text-subtitle-2 mt-4 mb-2">{{ $t('pidSettings.boil') }}</div>
 
       <v-divider :thickness="7" />
 
       <v-row class="mt-4 mb-2">
+        <!-- P Parameter -->
         <v-col cols="12" md="3">
-          <v-text-field type="number" v-model.number="pidSettings.boilkP" label="P" />
+          <v-text-field type="number" v-model.number="pidSettings.boilkP" :label="$t('pidSettings.kP')" >
+            <template v-slot:append>
+              <v-tooltip :text="$t('pidSettings.kP_boiltooltip')">
+                <template v-slot:activator="{ props }">
+                  <v-icon size="small" v-bind="props">{{ mdiHelp }}</v-icon>
+                </template>
+              </v-tooltip>
+            </template>
+          </v-text-field>
         </v-col>
+
+        <!-- I Parameter -->
         <v-col cols="12" md="3">
-          <v-text-field type="number" v-model.number="pidSettings.boilkI" label="I" />
+          <v-text-field type="number" v-model.number="pidSettings.boilkI" :label="$t('pidSettings.kI')">
+            <template v-slot:append>
+              <v-tooltip :text="$t('pidSettings.kI_boiltooltip')">
+                <template v-slot:activator="{ props }">
+                  <v-icon size="small" v-bind="props">{{ mdiHelp }}</v-icon>
+                </template>
+              </v-tooltip>
+            </template>
+          </v-text-field>
         </v-col>
+
+        <!-- D Parameter -->
         <v-col cols="12" md="3">
-          <v-text-field type="number" v-model.number="pidSettings.boilkD" label="D" />
+          <v-text-field type="number" v-model.number="pidSettings.boilkD" :label="$t('pidSettings.kD')">
+            <template v-slot:append>
+              <v-tooltip :text="$t('pidSettings.kD_boiltooltip')">
+                <template v-slot:activator="{ props }">
+                  <v-icon size="small" v-bind="props">{{ mdiHelp }}</v-icon>
+                </template>
+              </v-tooltip>
+            </template>
+          </v-text-field>
         </v-col>
       </v-row>
 
@@ -145,20 +207,6 @@ const save = async () => {
           <v-text-field type="number" v-model.number="pidSettings.heaterLimit" :label="$t('pidSettings.heater_limit')" :min="25" :max="100">
             <template v-slot:append>
               <v-tooltip :text="$t('pidSettings.heater_limit_tooltip')">
-                <template v-slot:activator="{ props }">
-                  <v-icon size="small" v-bind="props">{{ mdiHelp }}</v-icon>
-                </template>
-              </v-tooltip>
-            </template>
-            </v-text-field>
-        </v-col>
-      </v-row>
-
-      <v-row class="mt-4 mb-2">
-        <v-col cols="12" md="3">
-          <v-text-field type="number" v-model.number="pidSettings.heaterCycles" :label="$t('pidSettings.heater_cycles')" :min="1" :max="10">
-            <template v-slot:append>
-              <v-tooltip :text="$t('pidSettings.heater_cycles_tooltip')">
                 <template v-slot:activator="{ props }">
                   <v-icon size="small" v-bind="props">{{ mdiHelp }}</v-icon>
                 </template>

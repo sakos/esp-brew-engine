@@ -17,6 +17,7 @@ import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { Line } from "vue-chartjs";
 import { useI18n } from "vue-i18n";
 import BoostStatus from "@/enums/BoostStatus";
+
 const { t } = useI18n({ useScope: "global" });
 
 const webConn = inject<WebConn>("webConn");
@@ -25,14 +26,24 @@ const appStore = useAppStore();
 const clientStore = useClientStore();
 
 const status = ref<string>();
+const idleEntered = ref(false);
 const stirStatus = ref<string>();
 const temperature = ref<number>();
 const outputPercent = ref<number>();
 const targetTemperature = ref<number>();
-const manualOverrideTemperature = ref<number>();
+const manualOverrideTemperature = ref<number | null>(null);
 const manualOverrideOutput = ref<number | null>(null);
 const inOverTime = ref<boolean>(false);
 const boostStatus = ref<BoostStatus>(BoostStatus.Off);
+const powerUsage = ref<number>();
+const currentStepName = ref<string>();
+const pidOrigOutput = ref<number>();
+const outputOverrides = ref<number>();
+const resetManualOutput = ref<boolean>();
+const resetManualTemp = ref<boolean>();
+const currentScheduleName = ref<string>();
+const labelYPos = ref<number>();
+let audio: HTMLAudioElement | null = null;
 
 const intervalId = ref<any>();
 
@@ -42,6 +53,10 @@ const notificationDialogText = ref<string>("");
 
 const notificationTimeouts = ref<Array<number>>([]);
 const notificationsShown = ref<Array<number>>([]);
+
+const lastCheckedAt = ref<number>(0); // Unix timestamp in milisec, 0 at beginning
+const MAX_CHECK_INTERVAL = 1 * 60 * 1000; // 1 minute
+
 
 const chartInitDone = ref(false);
 
@@ -121,17 +136,6 @@ const speakMessage = async (message: string) => {
 };
 
 const showNotificaton = async (notification: INotification, alert: boolean) => {
-  // Currently in overtime don't need to show, updated notifications will come after overtime
-  if (inOverTime.value) {
-    return;
-  }
-
-  // Overtime status comes to slow so we get incorrect messages when notifications are right on the step time, we skip them id temp not reached
-  if (targetTemperature.value != null && temperature.value != null) {
-    if (targetTemperature.value - temperature.value > 0.5) {
-      return;
-    }
-  }
 
   notificationsShown.value.push(notification.timePoint);
 
@@ -173,7 +177,7 @@ const chartAnnotations = computed(() => {
 
       currentNotifications = scheduleNotifications.map((notification) => {
         let notificationTime = startDateTime.value!;
-        notificationTime += notification.timeFromStart * 60;
+        notificationTime += notification.timeAbsolute * 60;
 
         const newNotification = { ...notification };
         newNotification.timePoint = notificationTime;
@@ -190,14 +194,13 @@ const chartAnnotations = computed(() => {
       type: "line",
       xMin: notificationTime,
       xMax: notificationTime,
+      yMax: labelYPos.value,     				// Position above 100 C not to overlap the temp line
       borderColor: "rgb(255, 99, 132)",
       borderWidth: 2,
       label: {
         content: notification.name,
-        drawTime: "afterDatasetsDraw",
+        position: "end",
         display: true,
-        yAdjust: -110,
-        position: "top",
       },
       click(context: any, event: any) {
         showNotificaton(notification, false);
@@ -297,6 +300,15 @@ const chartData = computed(() => {
       y: temp.temp,
     }));
 
+    // Find the very last temperature value from this sensor's history
+    let currentSensorValueText = "";
+    if (extraSet.temps.length > 0) {
+      // Get the last item in the temps array
+      const lastTempRecord = extraSet.temps[extraSet.temps.length - 1];
+      // Format to 2 decimal places to match the C++ precision
+      currentSensorValueText = ` (${lastTempRecord.temp.toFixed(2)}°)`;
+    }
+
     let label = extraSet.sensor;
     let { color } = extraSet;
     const sensor = tempSensors.value.find((s) => s.id === extraSet.sensor);
@@ -306,8 +318,11 @@ const chartData = computed(() => {
       color = sensor.color;
     }
 
+    // Append the current live temperature directly to the label text
+    const dynamicLabel = `${label}${currentSensorValueText}`;
+
     const dataset = {
-      label,
+      label: dynamicLabel, // Updated with the live value
       backgroundColor: color,
       borderColor: color,
       lineWidth: 0.2,
@@ -348,8 +363,9 @@ const setNotifications = (newNotifications: Array<INotification>) => {
     .filter((n) => notificationsShown.value.includes(n.timePoint) === false)
     .forEach((notification) => {
       const timeTill = notification.timePoint * 1000 - Date.now();
-      // We do want past notification due to overtime, but these are verry short in the past! max 10 seconds
-      if (timeTill > -10000) {
+      // We do want to loose notification due to overtime, but these are very short in the past! max 10 seconds 
+	  // Overtime is gradual, we do not schedule notification popups during overtime. Instead an update will happen after overtime has ended
+      if ((timeTill > -10000) && !inOverTime.value) {
         const timeoutId = window.setTimeout(() => {
           showNotificaton(notification, true);
         }, timeTill);
@@ -357,12 +373,14 @@ const setNotifications = (newNotifications: Array<INotification>) => {
       }
     });
 
+
   notificationTimeouts.value = timeoutIds;
 
   notifications.value = newNotifications;
 };
 
 const getRunningSchedule = async () => {
+
   const requestData = {
     command: "GetRunningSchedule",
     data: null,
@@ -376,19 +394,51 @@ const getRunningSchedule = async () => {
 
   executionSteps.value = apiResult.data.steps;
   setNotifications(apiResult.data.notifications as Array<INotification>);
+ 
 
   lastRunningVersion.value = apiResult.data.version;
 };
 
+const resetAll = () => {
+  currentTemps.value = [];
+  executionSteps.value = [];
+  rawData.value = [];
+  notificationsShown.value = [];
+  setStartDateNow();
+};
+
+
+watch(status, (newStatus, oldStatus) => {
+  if (newStatus === "Idle" && oldStatus !== "Idle") {
+    idleEntered.value = true;  // Idle mode entered after schedule finished
+  }
+});
+
+watch(selectedMashSchedule, (newVal, oldVal) => {
+  currentTemps.value = [];		// delete temp history
+  setStartDateNow();			// reset chart start time
+  if (idleEntered.value) {
+    // Has effect only once after schedule was finished
+    resetAll();						// make chart update working again
+    idleEntered.value = false;		// only once
+  }
+});
+
+let controller: AbortController | null = null;
+
 const getData = async () => {
+  // If there is a pending request, abort it
+  controller?.abort();
+  controller = new AbortController();
+
   const requestData = {
     command: "Data",
     data: {
-      LastDate: lastGoodDataDate.value,
+      lastDate: lastGoodDataDate.value,
     },
   };
 
-  const apiResult = await webConn?.doPostRequest(requestData);
+  const apiResult = await webConn?.doPostRequest(requestData, { signal: controller.signal });
 
   if (apiResult === undefined || apiResult.success === false) {
     return;
@@ -398,26 +448,44 @@ const getData = async () => {
   stirStatus.value = apiResult.data.stirStatus;
   temperature.value = apiResult.data.temp;
   outputPercent.value = apiResult.data.output;
-  manualOverrideOutput.value = apiResult.data.manualOverrideOutput;
-
-  if (focussedField.value !== "manualOverrideTemperature") {
-    manualOverrideTemperature.value = apiResult.data.manualOverrideTargetTemp;
-  }
-
   targetTemperature.value = apiResult.data.targetTemp;
   lastGoodDataDate.value = apiResult.data.lastLogDateTime;
   inOverTime.value = apiResult.data.inOverTime;
   boostStatus.value = apiResult.data.boostStatus;
-  const serverRunningVersion = apiResult.data.runningVersion;
-
-  // notifications move with overtime and will be re-added when it is done
-  if (inOverTime.value) {
-    clearAllNotificationTimeouts();
+  powerUsage.value = apiResult.data.powerUsage;
+  currentStepName.value = apiResult.data.currentStepName;
+  pidOrigOutput.value = apiResult.data.pidOrigOutput;
+  outputOverrides.value = apiResult.data.outputOverrides;
+  resetManualOutput.value = apiResult.data.resetManualOutput;
+  resetManualTemp.value = apiResult.data.resetManualTemp;
+  if (status.value !== 'Idle') {
+    const scheduleName = apiResult.data.currentScheduleName;
+    selectedMashSchedule.value = appStore.mashSchedules.find(ms => ms.name === scheduleName) || null;
   }
 
-  if (status.value === "Running" && lastRunningVersion.value !== serverRunningVersion) {
+  if (resetManualOutput.value) {
+	manualOverrideOutput.value = null;
+  }
+  
+  if (resetManualTemp.value) {
+	manualOverrideTemperature.value = null;
+  }
+  
+  
+  const serverRunningVersion = apiResult.data.runningVersion;
+  const now = Date.now();
+  const isTimeoutExpired = (now - lastCheckedAt.value) > MAX_CHECK_INTERVAL;
+
+
+  if (status.value === "Running" && (lastRunningVersion.value !== serverRunningVersion || isTimeoutExpired)) {
     // the schedule has changed, we need to update
+	// Periodic update as well to prevent delay in browser due to sleep.
     getRunningSchedule();
+	lastCheckedAt.value = Date.now();
+  }
+
+  if (inOverTime.value) {
+    clearAllNotificationTimeouts();
   }
 
   const tempData = [...rawData.value, ...apiResult.data.tempLog];
@@ -472,16 +540,16 @@ const getData = async () => {
   }
 };
 
-const changeTargetTemp = async () => {
-  if (manualOverrideTemperature.value === undefined) {
+
+const changeTargetTemp = (event: any) => {
+  if (event.target.value === undefined) {
     return;
   }
-
-  // for some reason value is still a string while ref defined as number, bug in vue?
-  const forceInt = Number.parseInt(manualOverrideTemperature.value?.toString(), 10);
+    
+  const forceInt = Number.parseInt(event.target.value.toString(), 10);
 
   const requestData = {
-    command: "SetTemp",
+    command: "SetOverrideTemp",
     data: {
       targetTemp: forceInt,
     },
@@ -495,7 +563,6 @@ const changeOverrideOutput = (event: any) => {
   if (event.target.value === undefined) {
     return;
   }
-
   const forceInt = Number.parseInt(event.target.value.toString(), 10);
 
   const requestData = {
@@ -508,6 +575,7 @@ const changeOverrideOutput = (event: any) => {
   webConn?.doPostRequest(requestData);
   // todo capture error
 };
+
 
 const setStartDateNow = () => {
   const now = new Date();
@@ -523,11 +591,7 @@ const start = async () => {
   };
 
   // reset all our data so we can start over
-  currentTemps.value = [];
-  executionSteps.value = [];
-  rawData.value = [];
-  notificationsShown.value = [];
-  setStartDateNow();
+  resetAll();
 
   if (selectedMashSchedule.value != null) {
     requestData.data.selectedMashSchedule = selectedMashSchedule.value?.name;
@@ -577,15 +641,6 @@ const stopStir = async () => {
 
 const debounceTargetTemp = debounce(changeTargetTemp, 1000);
 
-watch(() => manualOverrideTemperature.value, debounceTargetTemp);
-
-watch(selectedMashSchedule, () => {
-  // reset all our data so we can start over
-  currentTemps.value = [];
-  executionSteps.value = [];
-  rawData.value = [];
-  setStartDateNow();
-});
 
 const initChart = () => {
   ChartJS.register(Title, Tooltip, Legend, PointElement, LineElement, TimeScale, LinearScale, CategoryScale, Filler, annotationPlugin);
@@ -659,17 +714,56 @@ const chartOptions = computed<any>(() => {
 onMounted(() => {
   // atm only used to render te schedule at the current time
   setStartDateNow();
+  
+  if (appStore.temperatureScale === TemperatureScale.Fahrenheit) {
+    labelYPos.value = 240;
+  } else {
+    labelYPos.value = 115;
+  }
+
 
   intervalId.value = setInterval(() => {
     getData();
   }, 3000);
 
   initChart();
+  
+  // SpeechSynthesis voice load (if they are not yet loaded)
+  const synth = window.speechSynthesis;
+  if (!synth.getVoices().length) {
+    // Start dummy utterance with silent wser to load voices 
+    const dummyUtterance = new SpeechSynthesisUtterance(" "); //not text
+    dummyUtterance.volume = 0; // to be silent
+    synth.speak(dummyUtterance);
+  }
+  
+  // Start silent audio playback loop in the background to keep audio device open while screen gets locked
+  audio = new Audio("/silence.mp3");
+  audio.loop = true;
+  audio.muted = true;
+  audio.play().catch(() => {
+    const startAudio = () => {
+      audio?.play();
+      window.removeEventListener("click", startAudio);
+      window.removeEventListener("touchstart", startAudio);
+    };
+    window.addEventListener("click", startAudio, { once: true });
+    window.addEventListener("touchstart", startAudio, { once: true });
+  });
+
 });
 
 onBeforeUnmount(() => {
   clearAllNotificationTimeouts();
   clearInterval(intervalId.value);
+  
+  // Stop and release silent mp3 playback
+  if (audio) {
+    audio.pause();
+    audio.src = "";
+    audio = null;
+  }
+
 });
 
 const displayStatus = computed(() => {
@@ -722,7 +816,7 @@ const labelTargetTemp = computed(() => {
       <v-row style="height: 50vh">
         <Line v-if="chartInitDone && chartData" :options="chartOptions" :data="chartData" />
       </v-row>
-      <v-row>
+      <v-row no-gutters>
         <v-col cols="12" md="3">
           <v-text-field v-model="displayStatus" readonly :label="$t('control.status')" />
         </v-col>
@@ -732,12 +826,38 @@ const labelTargetTemp = computed(() => {
         <v-col cols="12" md="3">
           <v-text-field v-model="targetTemperature" readonly :label="`${$t('control.target')} (${appStore.tempUnit})`" />
         </v-col>
-        <v-col cols="12" md="3">
-          <v-text-field v-model="manualOverrideTemperature" @focus="focussedField = 'manualOverrideTemperature'" @blur="focussedField = ''" type="number" :label="labelTargetTemp" />
+		<v-col cols="12" md="3">
+          <v-text-field
+            v-model.number="outputPercent"
+            type="number"
+            :label="$t('control.output')"
+            readonly />
         </v-col>
       </v-row>
-      <v-row>
-        <v-col cols="12" md="6">
+      <v-row no-gutters>
+		<v-col cols="12" md="3">
+          <v-text-field
+            v-model.number="pidOrigOutput"
+            type="number"
+            :label="$t('control.pid_orig_output')"
+            readonly />
+        </v-col>
+		<v-col cols="12" md="3">
+          <v-text-field
+            v-model.number="outputOverrides"
+            type="number"
+            :label="$t('control.output_overrides')"
+            readonly />
+        </v-col>
+		<v-col cols="12" md="3">
+         <v-text-field v-model="manualOverrideTemperature" type="number" :label="labelTargetTemp" @change="changeTargetTemp" />  
+        </v-col>
+        <v-col cols="12" md="3">
+         <v-text-field v-model="manualOverrideOutput" type="number" :label="$t('control.set_override_output')" @change="changeOverrideOutput" />  
+        </v-col>
+      </v-row>
+      <v-row no-gutters>
+        <v-col cols="12" md="3">
           <v-select
             :label="$t('control.mashSchedule')"
             :readonly="status !== 'Idle'"
@@ -749,14 +869,10 @@ const labelTargetTemp = computed(() => {
             return-object />
         </v-col>
         <v-col cols="12" md="3">
-          <v-text-field
-            v-model.number="outputPercent"
-            type="number"
-            :label="$t('control.output')"
-            readonly />
+		  <v-text-field v-model="currentStepName" readonly :label="$t('control.current_step_name')" />
         </v-col>
         <v-col cols="12" md="3">
-          
+          <v-text-field v-model="powerUsage" readonly :label="$t('control.power_consumption')" />          
         </v-col>
 
       </v-row>
@@ -764,16 +880,6 @@ const labelTargetTemp = computed(() => {
         <v-col cols="12" md="6">
           <v-btn v-if="status === 'Idle'" color="success" class="mt-4" block @click="start"> {{ $t('control.start') }} </v-btn>
           <v-btn v-else color="error" class="mt-4" block @click="stop"> {{ $t('control.stop') }} </v-btn>
-        </v-col>
-        <v-col cols="12" md="3">
-          <v-text-field
-            v-model.number="manualOverrideOutput"
-            type="number"
-            :label="$t('control.override_output')"
-            readonly />
-        </v-col>
-        <v-col cols="12" md="3">
-          <v-text-field type="number" :label="$t('control.set_override_output')" @change="changeOverrideOutput" />
         </v-col>
 
       </v-row>

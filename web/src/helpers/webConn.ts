@@ -8,7 +8,7 @@ export default class WebConn {
     this.rootUrl = rootUrl;
   }
 
-  doPostRequest(data: any): Promise<IApiResult> {
+  doPostRequest(data: any, options?: { signal?: AbortSignal }): Promise<IApiResult> {
     return new Promise((resolve, reject) => {
       const url = `${this.rootUrl}api`;
 
@@ -23,6 +23,7 @@ export default class WebConn {
         // redirect: "follow", // manual, *follow, error
         // referrerPolicy: "no-referrer", // no-referrer, *no-referrer-when-downgrade, origin, origin-when-cross-origin, same-origin, strict-origin, strict-origin-when-cross-origin, unsafe-url
         body: JSON.stringify(data), // body data type must match "Content-Type" header
+		signal: options?.signal,  // signal handover to fetch
       })
         .then((result) => {
           const apiResult = result.json();

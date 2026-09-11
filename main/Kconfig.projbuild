@@ -68,7 +68,7 @@ menu "BrewEngine Config"
         help
             Buzzer Pin
 
-    config InvertOutputs
+config InvertOutputs
         bool "Invert Outputs"
         default n
         help
@@ -89,5 +89,17 @@ menu "BrewEngine Config"
             PID LOOPTIME
             Default time between pid calc and ajust, since water heating is a slow proccess this works best at 60sec.
 
+			
+     config SPEAKER1
+        int "Speaker Pin"
+        default 0
+        help
+            Speaker  Pin
+
+     config ONEWIREPOWER
+        int "Onewire power Pin"
+        default 0
+        help
+            Onewire power Pin
 
 endmenu

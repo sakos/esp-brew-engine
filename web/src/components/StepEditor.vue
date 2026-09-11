@@ -4,6 +4,7 @@ import { useAppStore } from "@/store/app";
 import { mdiDelete, mdiPencil } from "@mdi/js";
 import { ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+
 const { t } = useI18n({ useScope: "global" });
 
 const appStore = useAppStore();
@@ -87,6 +88,14 @@ const stepDeleteItemOk = async () => {
 
   closeDeleteDialog();
 };
+
+const stepTimeRules = [
+  (v: number | null | undefined) =>
+    v !== null && v !== undefined || t("Step time is required"),
+  (v: number) =>
+    v > 0 || t("Step time must be greater than zero")
+];
+
 </script>
 
 <template>
@@ -121,16 +130,16 @@ const stepDeleteItemOk = async () => {
                   <v-text-field type="number" v-model.number="editingStep.temperature" :label="`${t('stepEditor.temperature')} ${appStore.tempUnit}`" />
                 </v-row>
                 <v-row>
-                  <v-text-field type="number" v-model.number="editingStep.stepTime" :label='t("stepEditor.step_time")' />
+                  <v-text-field type="number" v-model.number="editingStep.stepTime" :label='t("stepEditor.step_time")' :rules="stepTimeRules" :min="1" required />
                 </v-row>
                 <v-row>
                   <v-checkbox v-model="editingStep.extendStepTimeIfNeeded" :label='t("stepEditor.extend_step_time")' />
-                </v-row>     
-               <v-row>
+                </v-row>
+                <v-row>
                   <v-checkbox v-model="editingStep.allowBoost" :label='t("stepEditor.allow_boost")' />
                 </v-row>
                 <v-row>
-                  <v-text-field type="number" v-model.number="editingStep.time" :label='t("stepEditor.hold_time")' />
+                  <v-text-field type="number" v-model.number="editingStep.time" :label='t("stepEditor.hold_time")' :rules="stepTimeRules" :min="1" required />
                 </v-row>
               </v-container>
             </v-card-text>
@@ -162,8 +171,7 @@ const stepDeleteItemOk = async () => {
     </template>
     <template v-slot:[`item.extendStepTimeIfNeeded`]="{ item }">
       <v-checkbox-btn class="align-right justify-center" v-model="item.extendStepTimeIfNeeded" disabled />
-    </template>
-    <template v-slot:[`item.allowBoost`]="{ item }">
+    </template><template v-slot:[`item.allowBoost`]="{ item }">
       <v-checkbox-btn class="align-right justify-center" v-model="item.allowBoost" disabled />
     </template>
 

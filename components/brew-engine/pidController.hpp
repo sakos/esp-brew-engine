@@ -6,107 +6,126 @@
 #ifndef INCLUDE_PIDCONTROLLER_HPP_
 #define INCLUDE_PIDCONTROLLER_HPP_
 
-#include <stdexcept>
-#include <iostream>
-using namespace std;
-using std::cout;
+#include <algorithm>
+#include <cmath>
+#include "esp_log.h"
 
 class PIDController
 {
-
 private:
     double previousError;
     double integral;
-    double previousActual;
-
-    double kp; // Proportional
-    double ki; // Integral
-    double kd; // Derivative
-    double max;
-    double min = 0;
-
+    double kp; 
+    double ki; 
+    double kd; 
+    double maxOutput;
+    double minOutput;
     bool firstRun = true;
 
-    void addToIntegral(double i)
-    {
-        double newIntegral = integral + i;
-
-        integral = clamp(newIntegral, min, max);
-
-        if (debug)
-        {
-            cout << "new integral:" + to_string(integral) + "\n";
-        }
-    }
+    // --- FIX SCALING FACTORS FOR HUMAN-READABLE TUNING ---
+    // This allows the user to input normal numbers (e.g., I=0.5, D=25) 
+    // instead of micro-fractions or massive hundreds.
+    const double I_SCALE = 1.0 / 1000.0; // User input '1.0' becomes 0.001 internally
+    const double D_SCALE = 10.0;         // User input '1.0' becomes 10.0 internally
 
 public:
     bool debug = false;
 
     PIDController(double p, double i, double d)
     {
-        if (p == 0 || i == 0 || d == 0)
-        {
-            throw std::invalid_argument("K,I or P should not be empty!");
-        }
-
         this->kp = p;
-        this->ki = i;
-        this->kd = d;
-
-        previousError = 0.0;
-        integral = 0.0;
+        // Apply the internal scaling factor directly during initialization
+        this->ki = i * I_SCALE;
+        this->kd = d * D_SCALE;
+        this->previousError = 0.0;
+        this->integral = 0.0;
+        this->minOutput = 0.0;
+        this->maxOutput = 100.0;
     }
 
-    void setMax(double max)
+	
+    void setMax(double max) { this->maxOutput = max; }
+    void setMin(double min) { this->minOutput = min; }
+    void setPID(double p, double i, double d)
     {
-        this->max = max;
-    }
+        this->kp = p;
+        this->ki = i * I_SCALE; 
+        this->kd = d * D_SCALE; 
+    }	
 
-    void setMin(double min)
+    // dt: elapsed time since last execution in seconds (e.g., 20.0 or 30.0)
+    double getOutput(double actual, double setpoint, bool inhold, double dt)
     {
-        this->min = min;
-    }
+        if (dt <= 0.0) dt = 1.0; // Safety fallback for invalid dt
 
-    double getOutput(double actual, double setpoint)
-    {
-        previousActual = actual;
-
-        // Error
         double error = setpoint - actual;
-
-        // Proportional
+        
+        // 1. Proportional term (time-independent)
         double p = kp * error;
 
-        double i = 0;
-        double d = 0;
+        double i = 0.0;
+        double d = 0.0;
 
-        // skip i and d on first run
         if (!this->firstRun)
         {
-            if (ki > 0)
+            // 2. Integral term with conditional integration and true trapezoidal rule
+            if (ki > 0.0 && inhold )
             {
-                // Integral 10
-                addToIntegral(error);
-
-                i = ki * (integral / 2); // Trapezoidal integration
-                i = clamp(i, min, max);
+                // True trapezoidal integration: ((current_error + previous_error) / 2) * dt
+                integral += ((error + previousError) / 2.0) * dt;
+				
+				i = ki * integral;
+				
+                // Anti-windup: Clamp the I-term 
+                // Tight negative limit to ensure fast recovery when temperature drops
+                if (i < -15.0) 
+                { 
+                    i = -15.0; 
+                    integral = -15.0 / ki; 
+                }
+                // Standard upper limit for maximum physical output
+                if (i > maxOutput) 
+                { 
+                    i = maxOutput; 
+                    integral = maxOutput / ki; 
+                }   
+			}		
+            else
+            {
+                // Reset integral accumulator during ramp phase
+                integral = 0.0;
+                i = 0.0;
             }
 
-            // Derivative
-            d = kd * (error - previousError);
-        }
+			// 3. Derivative term with dynamic error-dependent scaling
+			double raw_d = kd * ((error - previousError) / dt);
+			
+			// Calculate absolute values for safe magnitude comparison
+			double abs_error = std::abs(error);
+			double abs_change = std::abs(error - previousError);
+
+			// Default scaling factor is 1.0 (full braking)
+			double d_scale = 1.0;
+
+			// If the change rate is smaller than the distance to target, 
+			// damp the derivative brake proportionally.
+			if (abs_error > 0.0 && abs_change < abs_error)
+			{
+				d_scale = abs_change / abs_error;
+			}
+
+			// Apply the sign-safe scaling factor to the D-term
+			d = raw_d * d_scale;
+
+		}
+
         previousError = error;
+        this->firstRun = false;
 
         double output = p + i + d;
+        output = std::clamp(output, minOutput, maxOutput);
 
-        if (debug)
-        {
-            cout << "p:" + to_string(p) + " i:" + to_string(i) + " d:" + to_string(d) + " output:" + to_string(output) + "\n";
-        }
-
-        output = clamp(output, min, max);
-
-        this->firstRun = false;
+        ESP_LOGI("PID tune", "P: %.2f | I: %.2f | D: %.2f | PID: %.2f (dt: %.1fs)", p, i, d, output, dt);
 
         return output;
     }

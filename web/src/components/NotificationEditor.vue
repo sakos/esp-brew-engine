@@ -34,10 +34,11 @@ watch(
 const tableNotificationsHeaders = ref<Array<any>>([
   { title: t("notificationEditor.name"), key: "name", align: "start" },
   { title: t("notificationEditor.time_from_start"), key: "timeFromStart", align: "start" },
+  { title: t("notificationEditor.ref_step_index"), key: "refStepIndex", align: "start" },
   { title: t("notificationEditor.buzzer"), key: "buzzer", align: "start" },
   { title: t("notificationEditor.actions"), key: "actions", sortable: false },
 ]);
-const sortNotificationsBy = ref<Array<any>>([{ key: "index", order: "asc" }]);
+const sortNotificationsBy = ref<Array<any>>([{ key: "timeAbsolute", order: "asc" }]);
 
 const showNotificationDialog = ref<boolean>(false);
 const showNotificationDeleteDialog = ref<boolean>(false);
@@ -100,6 +101,9 @@ const notificationDeleteItemOk = async () => {
                 </v-row>
                 <v-row>
                   <v-text-field type="number" v-model.number="editingNotification.timeFromStart" :label='t("notificationEditor.time_from_start")' />
+                </v-row>
+				<v-row>
+                  <v-text-field type="number" v-model.number="editingNotification.refStepIndex" :label='t("notificationEditor.ref_step_index")' />
                 </v-row>
                 <v-row>
                   <v-switch v-model="editingNotification.buzzer" :label='t("notificationEditor.buzzer")' color="red" />

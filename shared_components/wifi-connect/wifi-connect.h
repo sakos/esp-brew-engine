@@ -38,7 +38,7 @@ class WiFiConnect
 {
 private:
     static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
-    void wifi_init_sta(void);
+	bool wifi_try_sta_connect(void);
     void wifi_init_softap(void);
     void gotIP(string Ip);
     void printTime();
@@ -54,9 +54,19 @@ private:
     string ssid = "";
     string password = "";
     int8_t maxWifiPower = 15; // seems some boards have issues at 20
+	
+	int8_t configVersion = 1;
+	// AP side settings
+	string apSSID = "";
+	string apPassword = "";
+	int8_t apMaxPower;
+
+	// STA side settings
+	string staSSID = "";
+	string staPassword = "";
 
     string ntpServer = "pool.ntp.org";
-    uint8_t apChannel = 7;
+    uint8_t apChannel = 0;				//auto channel
     bool enableAP = true;
 
 public:

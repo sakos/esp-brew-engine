@@ -5,6 +5,9 @@ export interface INotification {
   timePoint: number;
   buzzer: boolean;
   done?: boolean;
+  refStepIndex: number;
+  timeAbsolute: number;
+  
 }
 
 export const defaultNotification: INotification = {
@@ -14,4 +17,6 @@ export const defaultNotification: INotification = {
   timePoint: 0,
   buzzer: true,
   done: false,
+  refStepIndex: 0,
+  timeAbsolute: 0,
 };

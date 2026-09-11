@@ -17,8 +17,10 @@ public:
     system_clock::time_point timePoint;
     bool buzzer;
     bool done;
+	uint refStepIndex;
+	uint timeAbsolute;
 
-    json to_json()
+    json to_json() //Needed for GUI view
     {
         int seconds = 0;
         if (this->timePoint.time_since_epoch() != decltype(this->timePoint)::duration::zero())
@@ -33,6 +35,8 @@ public:
         jNotification["timePoint"] = seconds;
         jNotification["buzzer"] = this->buzzer;
         jNotification["done"] = this->done;
+        jNotification["refStepIndex"] = this->refStepIndex;
+        jNotification["timeAbsolute"] = this->timeAbsolute;
 
         return jNotification;
     }
@@ -42,8 +46,18 @@ public:
         this->name = jsonData["name"].get<string>();
         this->timeFromStart = jsonData["timeFromStart"].get<int>();
         this->buzzer = jsonData["buzzer"].get<bool>();
-        this->done = false; // this can never come from json, always from control loop
-
+//        this->done = false; // this can never come from json, always from control loop
+		if (jsonData.contains("refStepIndex")) 
+		{
+			this->refStepIndex = jsonData["refStepIndex"].get<int>();
+			// refStepIndex has been assigned a value
+		} else {
+			// refStepIndex was not present in the JSON data
+			// Data migration from legacy. Relative time is set to start reference
+			this->refStepIndex = 0; 
+		}
+		
+		
         if (!jsonData["message"].is_null() && jsonData["message"].is_string())
         {
             this->message = jsonData["message"];

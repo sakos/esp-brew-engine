@@ -9,6 +9,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
+#include "driver/ledc.h"
 
 #include "esp_log.h"
 #include <esp_http_server.h>
@@ -25,8 +26,10 @@
 #include <map>
 #include <vector>
 
+
 #include "onewire_bus.h"
 #include "ds18b20.h"
+#include "esp_timer.h"
 
 #include "mqtt_client.h"
 
@@ -75,6 +78,7 @@ private:
     static void reboot(void *arg);
     static void factoryReset(void *arg);
     static void buzzer(void *arg);
+    static void speaker(void *arg);
 
     void readTempSensorSettings();
     void detectOnewireTemperatureSensors();
@@ -83,6 +87,7 @@ private:
     void initHeaters();
     void readSystemSettings();
     void readSettings();
+	void calcNotificationTime();
     void saveMashSchedules();
     void setMashSchedule(const json &jSchedule);
     void savePIDSettings();
@@ -90,7 +95,7 @@ private:
     void addDefaultMash();
     void start();
     void loadSchedule();
-    void recalculateScheduleAfterOverTime();
+    void recalculateScheduleAfterOverTime(const uint extraSeconds);
     void stop();
     void logRemote(const string &message);
     void addDefaultHeaters();
@@ -129,6 +134,9 @@ private:
     // pid
     uint8_t pidOutput = 0;
     std::optional<int8_t> manualOverrideOutput = std::nullopt;
+	
+	bool resetManualOutput =false;					// Clear manual entered output value. This is to sync with WebGUI
+	bool resetManualTemp =false;					// Clear manual entered target temp value. This is to sync with WebGUI
 
     double mashkP = 10;
     double mashkI = 1;
@@ -138,34 +146,54 @@ private:
     double boilkI = 2;
     double boilkD = 2;
 
-    uint16_t pidLoopTime = 60; // time in seconds for a full loop,
-    bool resetPitTime = false; // bool to reset pit , we do this when out target changes
-    float tempMargin = 0.5;    // we don't want to nitpick about 0.5°C, water heating is not that percise
+    double maxDelta = 0;
+	double lastCalculatedAvg = 0.0f;  					// Stores the previous cycle's filtered temperature average in Celsius
+	static constexpr double MAX_ALLOWED_CHANGE = 0.15; 	// Max temperature change allowed per second in Celsius
 
-    uint8_t boostModeUntil = 85;
+    uint16_t pidLoopTime = 60; 							// time in seconds for a full loop,
+    bool resetPitTime = false; 							// bool to reset pit , we do this when out target changes
+    float const tempMargin = 0.5;    					// we don't want to nitpick about 0.5°C, water heating is not that percise
+
+    double boostModeUntil = 5;
 	uint8_t heaterLimit = 100;
-	uint8_t heaterCycles = 1;
-	uint8_t relayGuard = 5;
-
+	uint8_t relayGuard = 3;
+	
 
     // execution
     bool run = false;
     bool controlRun = false;   // true when a program is running
     bool boilRun = false;      // true when a boil schedule  is running
     bool skipTempLoop = false; // When we are changing temp settings we temporarily need to skip our temp loop
-    BoostStatus boostStatus;   // Status of boost
+    bool busBusy = false; 		// TRUE strictly when the temp readLoop is actively using the 1-Wire hardware bus
+    bool restRun = false;   // true when a program is completed but notifications are remaining
+    bool hold = false;   // true when a program schedule execution is in hold phase, false when it is in ramp.
+    bool inIwindow = false;   // true when a program schedule execution is close to hold and Integration component can be activated.
+   BoostStatus boostStatus;   // Status of boost
 
     bool inOverTime = false; // when a step time isn't reached we go in overtime, we need this to know that we need recalcualtion
+	const uint8_t overTimeTrigger = 8; // Time in seconds before step ends to pretrigger overtime. 0 would prevent notification delay, sporadic fault with 5.
+	const uint8_t overTimeStep = 5; // Time in seconds the time added at each overtime shift.
 
     string statusText = "Idle";
     std::map<string, MashSchedule *> mashSchedules;
     string selectedMashScheduleName;
     uint16_t currentMashStep;
 
+    float powerUsage = 0;		// Calculates the consumed electric power
+	string currentStepName; 	// Show pending step name on control page
+	
+    uint8_t pidOrigOutput = 0;	// PID calculation result
+    std::optional<uint8_t> outputOverrides = std::nullopt;	// Output override by system
+	
+
+	
+	
     std::map<uint16_t, ExecutionStep *> executionSteps; // calculated real steps
     uint16_t currentExecutionStep = 0;
     uint16_t stepInterval = 60;  // calcualte a substep every x seconds
     uint16_t runningVersion = 0; // we increase our version after recalc, so client can keep uptodate with planning
+	
+	
 
     // IO
     uint8_t gpioHigh = 1;
@@ -177,8 +205,12 @@ private:
     gpio_num_t oneWire_PIN;
     gpio_num_t stir_PIN;
     gpio_num_t buzzer_PIN;
+    gpio_num_t speaker1_PIN;
+ 	gpio_num_t onewirePower_PIN;
 
     uint8_t buzzerTime; // in seconds
+    uint16_t soundTime; // in milliseconds
+    uint16_t soundBurst; // in milliseconds
 
     std::deque<Notification *> notifications;
 
@@ -200,7 +232,7 @@ private:
     system_clock::time_point stirStartCycle;
 
     // one wire
-    onewire_bus_handle_t obh;
+    onewire_bus_handle_t obh = nullptr;
     std::map<uint64_t, TemperatureSensor *> sensors; // map with sensor id and handle
 
 public:

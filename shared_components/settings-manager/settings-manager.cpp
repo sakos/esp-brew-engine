@@ -224,8 +224,14 @@ void SettingsManager::Write(string name, string value)
 
     if (err != ESP_OK)
     {
-        ESP_LOGE(TAG, "Error writing Setting: %s", name.c_str());
+        ESP_LOGE(TAG, "Error writing Setting '%s': %s", name.c_str(), esp_err_to_name(err));
     }
+	
+	err = nvs_commit(*this->nvsHandle);  //Without this, the new wifi config strings were not saved.
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Error committing Setting '%s': %s", name.c_str(), esp_err_to_name(err));
+    } 
 }
 
 void SettingsManager::Write(string name, vector<uint8_t> value)
@@ -238,18 +244,30 @@ void SettingsManager::Write(string name, vector<uint8_t> value)
 
     if (err != ESP_OK)
     {
-        ESP_LOGE(TAG, "Error writing Setting: %s", name.c_str());
+        ESP_LOGE(TAG, "Error writing Setting '%s': %s", name.c_str(), esp_err_to_name(err));
     }
+
+/*	err = nvs_commit(*this->nvsHandle);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Error committing Setting '%s': %s", name.c_str(), esp_err_to_name(err));
+    } */
 }
 
 void SettingsManager::Write(string name, bool value)
 {
-    esp_err_t err = nvs_set_u8(*this->nvsHandle, name.c_str(), (uint8_t)value);
+	esp_err_t err = nvs_set_u8(*this->nvsHandle, name.c_str(), (uint8_t)value);
 
     if (err != ESP_OK)
     {
-        ESP_LOGE(TAG, "Error writing Setting: %s", name.c_str());
+        ESP_LOGE(TAG, "Error writing Setting '%s': %s", name.c_str(), esp_err_to_name(err));
     }
+
+/*	err = nvs_commit(*this->nvsHandle);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Error committing Setting '%s': %s", name.c_str(), esp_err_to_name(err));
+    } */
 }
 
 void SettingsManager::Write(string name, uint8_t value)
@@ -258,18 +276,30 @@ void SettingsManager::Write(string name, uint8_t value)
 
     if (err != ESP_OK)
     {
-        ESP_LOGE(TAG, "Error writing Setting: %s", name.c_str());
+        ESP_LOGE(TAG, "Error writing Setting '%s': %s", name.c_str(), esp_err_to_name(err));
     }
+
+/*	err = nvs_commit(*this->nvsHandle);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Error committing Setting '%s': %s", name.c_str(), esp_err_to_name(err));
+    } */
 }
 
 void SettingsManager::Write(string name, int8_t value)
 {
-    esp_err_t err = nvs_set_i8(*this->nvsHandle, name.c_str(), value);
+	esp_err_t err = nvs_set_i8(*this->nvsHandle, name.c_str(), value);
 
     if (err != ESP_OK)
     {
-        ESP_LOGE(TAG, "Error writing Setting: %s", name.c_str());
+        ESP_LOGE(TAG, "Error writing Setting '%s': %s", name.c_str(), esp_err_to_name(err));
     }
+
+/*	err = nvs_commit(*this->nvsHandle);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Error committing Setting '%s': %s", name.c_str(), esp_err_to_name(err));
+    } */
 }
 
 void SettingsManager::Write(string name, uint16_t value)
@@ -278,6 +308,12 @@ void SettingsManager::Write(string name, uint16_t value)
 
     if (err != ESP_OK)
     {
-        ESP_LOGE(TAG, "Error writing Setting: %s", name.c_str());
+        ESP_LOGE(TAG, "Error writing Setting '%s': %s", name.c_str(), esp_err_to_name(err));
     }
+
+/*	err = nvs_commit(*this->nvsHandle);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Error committing Setting '%s': %s", name.c_str(), esp_err_to_name(err));
+    } */
 }

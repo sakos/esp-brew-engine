@@ -17,6 +17,8 @@ const systemSettings = ref<ISystemSettings>({
   invertOutputs: false,
   mqttUri: "",
   temperatureScale: 0,
+  speaker1Pin: 0,
+  onewirePowerPin: 0,
 });
 
 // is same as enum TemperatureScale, but this wel never change, converting enum to options would be wastefull
@@ -150,6 +152,17 @@ const scaleChanged = () => {
             </template>
           </v-text-field>
         </v-col>
+        <v-col cols="12" md="3">
+          <v-text-field requierd v-model.number="systemSettings.onewirePowerPin" :label='t("systemSettings.onewire_power_pin")'>
+            <template v-slot:append>
+              <v-tooltip :text='t("systemSettings.onewire_power_pin_tooltip")'>
+                <template v-slot:activator="{ props }">
+                  <v-icon size="small" v-bind="props">{{ mdiHelp }}</v-icon>
+                </template>
+              </v-tooltip>
+            </template>
+          </v-text-field>
+        </v-col>
       </v-row>
 
       <v-row>
@@ -179,6 +192,17 @@ const scaleChanged = () => {
           </v-text-field>
         </v-col>
         <v-col cols="12" md="3">
+          <v-text-field v-model.number="systemSettings.speaker1Pin" :label='t("systemSettings.speaker1_pin")'>
+            <template v-slot:append>
+              <v-tooltip :text='t("systemSettings.speaker1_pin_tooltip")'>
+                <template v-slot:activator="{ props }">
+                  <v-icon size="small" v-bind="props">{{ mdiHelp }}</v-icon>
+                </template>
+              </v-tooltip>
+            </template>
+          </v-text-field>
+        </v-col>
+        <v-col cols="12" md="3">
           <v-text-field v-model.number="systemSettings.buzzerTime" :label='t("systemSettings.buzzer_time")'>
             <template v-slot:append>
               <v-tooltip :text='t("systemSettings.buzzer_time_tooltip")'>
@@ -191,7 +215,8 @@ const scaleChanged = () => {
         </v-col>
       </v-row>
 
-      <v-row>
+ 
+     <v-row>
         <v-col cols="12" md="3">
           <v-checkbox v-model="systemSettings.invertOutputs" :label='t("systemSettings.invert")'>
             <template v-slot:append>
@@ -204,7 +229,7 @@ const scaleChanged = () => {
           </v-checkbox>
         </v-col>
       </v-row>
-
+	  
       <v-row>
         <v-col cols="12" md="3">
           <v-text-field v-model="systemSettings.mqttUri" placeholder="mqtt://user:password@192.168.0.1:1883"

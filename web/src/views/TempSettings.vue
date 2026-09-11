@@ -11,15 +11,15 @@ const webConn = inject<WebConn>("webConn");
 const tempSensors = ref<Array<ITempSensor>>([]);
 
 const tableHeaders = ref<Array<any>>([
-  { title: t("tempSettings.id"), key: "id", align: "start" },
   { title: t("tempSettings.name"), key: "name", align: "start" },
   { title: t("tempSettings.color"), key: "color", align: "start" },
   { title: t("tempSettings.compensate_abs"), key: "compensateAbsolute", align: "start" },
   { title: t("tempSettings.compensate_rel"), key: "compensateRelative", align: "start" },
+  { title: t("tempSettings.last_temp"), key: "lastTemp", align: "end" },
   { title: t("tempSettings.show"), key: "show", align: "end" },
   { title: t("tempSettings.use_for_control"), key: "useForControl", align: "end" },
   { title: t("tempSettings.connected"), key: "connected", align: "end" },
-  { title: t("tempSettings.last_temp"), key: "lastTemp", align: "end" },
+  { title: t("tempSettings.id"), key: "id", align: "start" },
   { title: t("tempSettings.actions"), key: "actions", align: "end", sortable: false },
 ]);
 
