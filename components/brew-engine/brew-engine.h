@@ -95,7 +95,7 @@ private:
     void addDefaultMash();
     void start();
     void loadSchedule();
-    void recalculateScheduleAfterOverTime(const uint extraSeconds);
+	void adjustScheduleDynamic(const int deltaSeconds);
     void stop();
     void logRemote(const string &message);
     void addDefaultHeaters();
@@ -153,6 +153,8 @@ private:
     uint16_t pidLoopTime = 60; 							// time in seconds for a full loop,
     bool resetPitTime = false; 							// bool to reset pit , we do this when out target changes
     float const tempMargin = 0.5;    					// we don't want to nitpick about 0.5°C, water heating is not that percise
+	static constexpr uint16_t ADAPTIVEDELAY = 45; 						// Time in sec to converge remaining time estimation before adaptive correction is applied
+	static constexpr uint16_t ADAPTIVECYCLE = 10; 						// Time in sec to converge remaining time estimation before adaptive correction is applied
 
     double boostModeUntil = 5;
 	uint8_t heaterLimit = 100;
@@ -168,12 +170,16 @@ private:
     bool restRun = false;   // true when a program is completed but notifications are remaining
     bool hold = false;   // true when a program schedule execution is in hold phase, false when it is in ramp.
     bool inIwindow = false;   // true when a program schedule execution is close to hold and Integration component can be activated.
+	bool coolingStep = false;	// true when the step is a cooling step and no heating should be allowed if the cooling is faster than planned.
    BoostStatus boostStatus;   // Status of boost
 
-    bool inOverTime = false; // when a step time isn't reached we go in overtime, we need this to know that we need recalcualtion
+    bool inAdaptationTime = false; // when a step time recalculated, it is indicated on the GUI
 	const uint8_t overTimeTrigger = 8; // Time in seconds before step ends to pretrigger overtime. 0 would prevent notification delay, sporadic fault with 5.
 	const uint8_t overTimeStep = 5; // Time in seconds the time added at each overtime shift.
-
+	long plannedRemainingSeconds = 0;  // Time remaining from the current step
+	std::optional<long> requestedRemainingTime = std::nullopt;  // Remaining step time change request from web UI
+	float defaultTargetTemperature = 0; 		// Stores the default target temperature of the current step.  
+	
     string statusText = "Idle";
     std::map<string, MashSchedule *> mashSchedules;
     string selectedMashScheduleName;
@@ -184,6 +190,7 @@ private:
 	
     uint8_t pidOrigOutput = 0;	// PID calculation result
     std::optional<uint8_t> outputOverrides = std::nullopt;	// Output override by system
+    string overrideText = "";	//Output override reason text
 	
 
 	

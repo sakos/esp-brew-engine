@@ -125,7 +125,8 @@ public:
         double output = p + i + d;
         output = std::clamp(output, minOutput, maxOutput);
 
-        ESP_LOGI("PID tune", "P: %.2f | I: %.2f | D: %.2f | PID: %.2f (dt: %.1fs)", p, i, d, output, dt);
+		ESP_LOGI("PID tune", "Act: %.2f | Set: %.2f | Hold: %s | P: %.2f | I: %.2f | D: %.2f | PID: %.2f (dt: %.1fs)", 
+         actual, setpoint, inhold ? "true" : "false", p, i, d, output, dt);
 
         return output;
     }

@@ -23,6 +23,7 @@
     "interval": "Interval (min)",
     "timespan": "Timespan (min)",
     "output": "Heater output (%)",
+	"manual_override": "Manual set",
     "mashSchedule": "Mash/Boil schedule",
     "avg": "Control/Avg",
     "time": "Time",

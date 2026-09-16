@@ -1024,7 +1024,7 @@ void BrewEngine::start()
 	if (!this->controlRun)
 	{
 		this->controlRun = true;
-		this->inOverTime = false;
+		this->inAdaptationTime = false;
 		this->boostStatus = Off;
 		this->targetTemperature = this->temperature; // If nothing is selected
 
@@ -1192,7 +1192,7 @@ void BrewEngine::loadSchedule()
 	// Add notifications to schedule
 	for (auto const &notification : schedule->notifications)
 	{
-		// Schedule notification. Hre could be added a small delay to secure that zero timed notification is not triggered before inOverTime flag is fired in GUI
+		// Schedule notification. Here could be added a small delay to secure that zero timed notification is not triggered in GUI
 		auto notificationTime = SchedStartTime + minutes(notification->timeAbsolute); 
 
 		// copy notification to new map
@@ -1210,12 +1210,11 @@ void BrewEngine::loadSchedule()
 	this->runningVersion++;
 }
 
-void BrewEngine::recalculateScheduleAfterOverTime(const uint extraSeconds)
+void BrewEngine::adjustScheduleDynamic(const int deltaSeconds)
 {
-	ESP_LOGI(TAG, "Shifting Schedule during OverTime");
+	ESP_LOGI(TAG, "Adjusting Schedule by %d seconds", deltaSeconds);
 
 	int currentStepIndex = this->currentMashStep;
-
 	auto currentPos = this->executionSteps.find(currentStepIndex);
 
 	if (currentPos == this->executionSteps.end())
@@ -1225,31 +1224,79 @@ void BrewEngine::recalculateScheduleAfterOverTime(const uint extraSeconds)
 		return;
 	}
 
-
+	// 1. Shift remaining steps (either extending or shortening the timeline)
 	for (auto it = currentPos; it != this->executionSteps.end(); ++it)
 	{
 		auto step = it->second;
-		step->time += seconds(extraSeconds);
+		step->time += seconds(deltaSeconds);
 	}
 
-	// also increase notifications
+	// Get the current system time
+	auto now = std::chrono::system_clock::now();
+
+	// Define a protected safety horizon (e.g., 10 seconds from now).
+	// Notifications inside or pushed into this zone cannot be shortened further, 
+	// preventing them from being trapped in a loop by consecutive updates.
+	auto safetyHorizon = now + seconds(10);
+	
+	// Track the next available safe time slot for cascaded alerts
+	auto nextSafeNotificationTime = now + seconds(2);
+
+	// 2. Shift notifications with advanced cascade and "snowplow" protection
 	for (auto &notification : this->notifications)
 	{
 		if (!notification->done)
 		{
-			notification->timePoint += seconds(extraSeconds);
+			// Calculate what the new time would be naturally
+			auto newTime = notification->timePoint + seconds(deltaSeconds);
+
+			if (deltaSeconds < 0) // We are SHORTENING the timeline
+			{
+				// CASE A: The notification was already in the past or the shortening pushes it into the past
+				if (newTime < now)
+				{
+					notification->timePoint = nextSafeNotificationTime;
+					ESP_LOGW(TAG, "Notification '%s' bypassed! Cascaded to fire in the future.", notification->name.c_str());
+					nextSafeNotificationTime += seconds(5); // Space out consecutive alerts
+				}
+				// CASE B: The notification is in the future, but it's already inside our protected safety zone.
+				// OR the natural shortening would pull it inside the safety zone.
+				else if (notification->timePoint <= safetyHorizon || newTime < safetyHorizon)
+				{
+					// LOCK IT: If it's already in the safe zone, do not move it at all!
+					// If it's outside but about to enter, clamp it to the edge of the safe zone.
+					if (notification->timePoint > safetyHorizon)
+					{
+						notification->timePoint = safetyHorizon;
+						safetyHorizon += seconds(5); // Cascade the horizon for the next ones
+					}
+					// If it was already <= safetyHorizon, we leave notification->timePoint UNCHANGED.
+					// This lets it count down naturally and fire, breaking the snowplow loop.
+				}
+				else
+				{
+					// Normal shortening for notifications that are still far away in the future
+					notification->timePoint = newTime;
+				}
+			}
+			else // We are EXTENDING the timeline (deltaSeconds >= 0)
+			{
+				// Extensions are always safe to apply normally
+				notification->timePoint = newTime;
+			}
 		}
 	}
 
-	// increase version so client can follow changes
+	// Increase version so the client web interface can follow the changes
 	this->runningVersion++;
 }
+
 
 void BrewEngine::stop()
 {
 	this->controlRun = false;
 	this->boostStatus = Off;
-	this->inOverTime = false;
+	this->inAdaptationTime = false;
 	this->statusText = "Idle";
 	this->selectedMashScheduleName.clear();
 	this->currentStepName = "";	
@@ -1258,6 +1305,7 @@ void BrewEngine::stop()
 	this->resetManualOutput = true; // Clear manual inputs
 	this->resetManualTemp = true; // Clear manual inputs
 	this->targetTemperature = this->temperature;  
+	this->plannedRemainingSeconds = 0;
 
 }
 
@@ -1716,7 +1764,7 @@ void BrewEngine::pidLoop(void *arg)
 
 	uint totalWattage = 0;
 
-	// we calculate the total wattage we have availible, depens on heaters and on mash or boil
+	// we calculate the total wattage we have available, depens on heaters and on mash or boil
 	for (auto &heater : instance->heaters)
 	{
 		if (instance->boilRun && heater->useForBoil)
@@ -1755,16 +1803,25 @@ void BrewEngine::pidLoop(void *arg)
 		{
 			outputPercent = 100;
 			instance->outputOverrides = 100;
+			instance->overrideText = "Boost: ";
 		}
 		else if (instance->heaterLimit < outputPercent)
 		{
 			outputPercent = instance->heaterLimit;
 			instance->outputOverrides = instance->heaterLimit;
+			instance->overrideText = "Limit: ";
+		}
+		else if (instance->coolingStep)
+		{
+			outputPercent = 0;
+			instance->outputOverrides = 0;
+			instance->overrideText = "Cool: ";
 		}
 		else if (instance->boostStatus == Rest)
 		{
 			outputPercent = 0;
 			instance->outputOverrides = 0;
+			instance->overrideText = "Rest: ";
 		}
 		if (instance->manualOverrideOutput.has_value())
 		{
@@ -1958,23 +2015,32 @@ void BrewEngine::controlLoop(void *arg)
 	//Indicates that the program / notifications is done, however remaining notifications may present
 	bool noMoreStep = false;
 	bool noMoreNotification = true;
+	instance->coolingStep = false;	
 
+	
 	uint boostUntil;	// The Boost limit temperature
 	uint tempRate;		// The percentage of target temperature within a temp increasing step. 
+	
+	instance->defaultTargetTemperature = instance->temperature; 		// Stores the original step temperature in case of temp override
+	float actualStartTemperature = instance->temperature; 	// Stores the actual temperature at the start of the step. It could be even higher than the target despite we expect heating and vice versa.
+	float lastTargetTemperature = instance->temperature; 		// Stores the last actual target temperature. Used for detecting target change
 	
 	
 	// Clear override temp
 	// Clear override %
 
 	instance->restRun = false;
-	instance->inOverTime = false;
+	instance->inAdaptationTime = false;
 	instance->hold = true;
 
 	auto currentStep = instance->executionSteps.at(instance->currentMashStep);
 	auto prevStep = currentStep;
+	auto nextStep = currentStep;
 	instance->targetTemperature = instance->temperature; //As a first approach. Perfect for zero legth step
 	instance->currentStepName = currentStep->stepName;
 	instance->hold = currentStep->hold;
+	
+	system_clock::time_point nextAdaptationTime;
 
 	while (instance->run && instance->controlRun)
 	{
@@ -1985,21 +2051,13 @@ void BrewEngine::controlLoop(void *arg)
 		// Time elapsed, next step to be started
 		{
 			ESP_LOGI(TAG, "Step Ended");
-			instance->overrideTargetTemperature = std::nullopt;
-			instance->manualOverrideOutput = std::nullopt;
+			instance->manualOverrideOutput = std::nullopt;	// Remove manual override
+			instance->requestedRemainingTime = std::nullopt; // Clear stuck time change request
 			instance->resetManualOutput = true; // Clear manual inputs
-			instance->resetManualTemp = true; // Clear manual inputs
 			instance->boostStatus = Off; // disable boost. could be set right in next cycle. No problem, PID reset is delayed anyway.
 			instance->inIwindow = false; //Disable I tag in PID controller
 			resetPIDNextStep = true;	// We reset PID anyway
-
-
-			if (instance->inOverTime)
-			// Exit from overtime and update web to re-enable pending notification
-			{
-				instance->inOverTime = false;
-				instance->runningVersion++;
-			}
+			instance->plannedRemainingSeconds = 0; 
 			
 			if (instance->executionSteps.size() < (instance->currentMashStep + 2))
 			// There are no more steps
@@ -2029,76 +2087,191 @@ void BrewEngine::controlLoop(void *arg)
 				{
 					instance->currentStepName = currentStep->stepName; 
 					instance->targetTemperature = currentStep->temperature;  //
+					// do not touch defaultTargetTemperature and coolingstep flag. Keep it from the previous ramp phase
 					instance->hold = true;
 					instance->inIwindow = true; //Enable I tag in PID controller
+					instance->inAdaptationTime = false;
 				}
 				else
 				{
 					instance->currentStepName = currentStep->stepName;;
 					// Target temperature will be calculated in next cycle 1s delay.
 					instance->hold = false; 
+					actualStartTemperature = instance->temperature; 	//Set the current temperature as the actual starting reference temp
+					instance->overrideTargetTemperature = std::nullopt;  //New step, Manual temp override is cleared.
+					instance->resetManualTemp = true; // Clear manual temp in GUI
+					instance->defaultTargetTemperature = currentStep->temperature; 	// Reference temperature according the echedule is stored
+					instance->coolingStep = ((prevStep->temperature > currentStep->temperature) && instance->boilRun);  //Indicate if the step is cooling hence heating is disabled. Only in boil: hopstand
+					nextAdaptationTime = now + seconds(max(ADAPTIVEDELAY, static_cast<uint16_t>(duration_cast<seconds>(currentStep->time - now).count() * 0.15)));    //First time adaptation at 15% of the time or 50 seconds
+					nextStep = instance->executionSteps.at(instance->currentMashStep + 1);  // No check is needed. A hold step must be present after a ramp step.
 				}
-
 				ESP_LOGI(TAG, "Next step started");
 			}
+			instance->runningVersion++;
 		}
-		else if (!currentStep->hold && currentStep->extendIfNeeded && now >= currentStep->time - seconds (instance->overTimeTrigger) && now <= currentStep->time - seconds (instance->overTimeTrigger-3))
-		// Ramp is close to expiration, check if time extension is needed. No trigger if temp missed only in the very last seconds
-		{
-			ESP_LOGI(TAG, "Ramp step temp check");
-			if (abs(instance->targetTemperature - instance->temperature) > instance->tempMargin)
+		else 
+		{	
+			// During a step
+			// Common part for all cases
+
+			// Currently planned remaining seconds based on the clock
+			instance->plannedRemainingSeconds = duration_cast<seconds>(currentStep->time - now).count();
+			
+			// =========================================================================
+			// SYNCHRONOUS USER TIME ADJUSTMENT INTERRUPT
+			// =========================================================================
+			if (instance->requestedRemainingTime.has_value())
 			{
-				instance->inOverTime = true;
-				instance->recalculateScheduleAfterOverTime(instance->overTimeStep);	//Shift step end, remainig steps and notifications by Xs
-				ESP_LOGD(TAG, "Extend step");
-			}
-		}
-		else
-		// Middle in the step
-		{
-			// Calculate actual target temperature. Override if needed
-			if (instance->overrideTargetTemperature.has_value())
-			{
-				instance->targetTemperature = instance->overrideTargetTemperature.value();
-			}
-			else
-			{
-				if (currentStep->hold || currentStep->extendIfNeeded)
-				// In hold the temp is fixed, if adaptive ramp time the final target is set at the beginning to make it as fast as possible
+				long newRemaining = instance->requestedRemainingTime.value();
+				instance->requestedRemainingTime = std::nullopt; // Instantly clear the flag to process it only once
+
+				int deltaSeconds = newRemaining - instance->plannedRemainingSeconds;
+					
+				if ((instance->plannedRemainingSeconds + deltaSeconds) < 10) deltaSeconds = 10 - instance->plannedRemainingSeconds;
+				// Keep some margin to evaluate the step status after the change. 
+				// It is not allowed to directly end an adaptive ramp step				
+				
+				if (deltaSeconds != 0)
 				{
-					instance->targetTemperature = currentStep->temperature;
-				}
-				else
-				// In fixed time ramp we calculate the elapsed time in percent. Add PID loop time as the goal temp is targeted at PID loop done
-				{
-					tempRate = (uint)
-					100 * ((now + seconds(instance->pidLoopTime) - prevStep->time).count()) /
-					((currentStep->time - prevStep->time).count());
-					if (tempRate > 100 || instance->inOverTime)
-					{
-						tempRate = 100;
-					}
-					instance->targetTemperature = prevStep->temperature + (currentStep->temperature -  prevStep->temperature) * (float) tempRate / 100; 
-					//instance->targetTemperature = currentStep->temperature;  // Percentage is replaced with instant target
+					ESP_LOGI(TAG, "Synchronous time override triggered by user. Delta: %d seconds.", deltaSeconds);
+					instance->adjustScheduleDynamic(deltaSeconds);
+					instance->plannedRemainingSeconds += deltaSeconds;
 				}
 			}
 			
-			instance->inIwindow = (instance->temperature >= (instance->targetTemperature - instance->boostModeUntil)); 
-			// no need to check if boostModeUntil is zero. If target temp reached, I tag can be activated anyway.
+			// Calculate actual target temperature. Override if needed
+			currentStep->temperature = instance->overrideTargetTemperature.value_or(instance->defaultTargetTemperature);
+			if (abs(currentStep->temperature - lastTargetTemperature) > 0.01)
+			// Target temperature has changed
+			{
+				if (currentStep->hold)
+				{
+					prevStep->temperature = currentStep->temperature;
+				}
+				else
+				{
+					nextStep->temperature = currentStep->temperature;
+				}
+				lastTargetTemperature = currentStep->temperature;
+				instance->runningVersion++;
+			}
+
+
+			
+			if (currentStep->hold)
+			// 1. HOLD PHASE
+			{
+				instance->targetTemperature = currentStep->temperature;
+			}
+			if (!currentStep->extendIfNeeded)
+			// 2. FIXED LENGTH RAMP
+			{
+				// In fixed time ramp we calculate the elapsed time in percent. Add PID loop time as the goal temp is targeted at the beginning of the last PID loop
+				tempRate = (uint)
+				100 * ((now + seconds(instance->pidLoopTime) - prevStep->time).count()) /
+				(( currentStep->time - prevStep->time).count()+1);		// Can be zero at fakestep, add 1 to prevent.
+				tempRate = std::clamp (tempRate, 0U, 100U);
+				instance->targetTemperature = actualStartTemperature + (currentStep->temperature -  actualStartTemperature) * (float) tempRate / 100; 
+			}
+			else
+			// RAMP PHASE with real-time adaptive time adjustment (shortening / extending)
+			{
+				instance->targetTemperature = currentStep->temperature;
+								
+				// Remaining temperature range to reach target
+				double remainingTemp = std::abs(currentStep->temperature - instance->temperature);
+				
+				// CHECK 1, Target reached?
+				if ((remainingTemp <= instance->tempMargin) || (instance->plannedRemainingSeconds < 5))
+				// Target reached, but some time is remaining or temp is out of range in the last seconds (ignore it)
+				{
+					if (instance->plannedRemainingSeconds > instance->overTimeTrigger)
+					// Too long time is remaining let's shorten it
+					instance->adjustScheduleDynamic(5 - instance->plannedRemainingSeconds );  // Some margin for notification handling (overTimeTrigger must be > 5)
+					instance->inAdaptationTime = true;
+					instance->runningVersion++;
+					ESP_LOGI(TAG, "Adaptation active: Target reached, end step");
+				}	//otherwise do not shorten, just wait
+				
+				else if (instance->plannedRemainingSeconds <= instance->overTimeTrigger)
+				// CHECK 2. Target not yet reached but step is close to the end. Only time extension is allowed
+				{
+					// Extend the deadline by the default fallback step size (e.g., 30 seconds)
+					instance->adjustScheduleDynamic((int)instance->overTimeStep);
+					instance->inAdaptationTime = true;
+					instance->runningVersion++;
+					ESP_LOGW(TAG, "Late extension: Target not met at step end. Added %d seconds.", instance->overTimeStep);
+				}
+				else if ((now - nextAdaptationTime) >= seconds(0))
+				// CHECK 3. Adaptation point triggered
+				{
+					// Update the timestamp for the next period
+					nextAdaptationTime = now + seconds (ADAPTIVECYCLE) ;
+					
+					// Calculate elapsed time since the beginning of this step in seconds
+					auto elapsedSeconds = duration_cast<seconds>(now - prevStep->time).count();
+
+					// Calculate heating rate: (current_temp - start_temp) / elapsed_seconds
+					double currentRate = std::abs((instance->temperature - actualStartTemperature) / (double)elapsedSeconds);
+
+					// Remaining temp difference is a positive number and higher than tempMargin
+					// Estimated remaining seconds based on current heating trend, it is assumed that there is no overshoot
+					long estimatedRemainingSeconds = std::round(remainingTemp / currentRate);
+					
+
+					// Difference between plan and reality (positive: too slow, negative: too fast)
+					int deltaSeconds = (int)std::abs(estimatedRemainingSeconds - instance->plannedRemainingSeconds);
+					bool shorten = estimatedRemainingSeconds < instance->plannedRemainingSeconds;
+
+					// Dynamic correction limit: 10% of planned remaining time, but at least 5 seconds
+					int maxAllowedCorrection = (int)(instance->plannedRemainingSeconds * 0.10);
+
+					// Clamp the adjustment to prevent aggressive spikes in schedule changes
+					if (deltaSeconds > maxAllowedCorrection) 
+					{
+						deltaSeconds = maxAllowedCorrection;
+					}
+					
+					if (shorten)
+					{
+						if (deltaSeconds > (instance->plannedRemainingSeconds - instance->overTimeStep))
+						{
+							deltaSeconds = instance->plannedRemainingSeconds - instance->overTimeStep ; // do not shorten than actual remaining + margin
+						}
+						if (instance->plannedRemainingSeconds < ADAPTIVECYCLE) 
+						{
+							deltaSeconds = 0;		// too short remaining time for shorten.
+						}
+					}
+					if (deltaSeconds >= ADAPTIVECYCLE) 
+					// Avoid jitter from tiny sensor fluctuations: Only intervene if discrepancy >= ADAPTIVECYCLE
+					{
+						if (shorten) deltaSeconds = -deltaSeconds;
+						instance->adjustScheduleDynamic(deltaSeconds);
+						instance->inAdaptationTime = true;
+						instance->runningVersion++;
+						ESP_LOGI(TAG, "Adaptation active: Schedule adjusted by %d seconds.", deltaSeconds);
+					}
+				}						
+			}	//End of during a step IF
+			// Common part for all cases
+			// PID reset if needed due to new ramp step or boost just started/ended
+			instance->inIwindow = (instance->temperature >= (currentStep->temperature - instance->boostModeUntil)); 
+			// no need to check if boostModeUntil is zero. If target temp reached, "I" tag can be activated anyway.
 
 			// Handle boost mode		
-			if (currentStep->allowBoost)
+			if (currentStep->allowBoost && !currentStep->hold)
 			{
 				boostUntil = (uint)(currentStep->temperature - instance->boostModeUntil);
 
-				if (instance->boostStatus == Off && (instance->temperature < boostUntil) && (instance->boostModeUntil > 0.05) ) 
+				if (instance->boostStatus == Off && instance->inIwindow ) 
 				{
 					ESP_LOGI(TAG, "Boost Start Until: %d", boostUntil);
 					instance->logRemote("Boost Start");
 					instance->boostStatus = Boost;
 					resetPIDNextStep = true;
 				}
-				else if (instance->boostStatus == Boost && (instance->temperature >= boostUntil || (instance->boostModeUntil < 0.1)))
+				else if (instance->boostStatus == Boost && !instance->inIwindow)
 				{
 					// Go immediatelly to boost off
 					ESP_LOGI(TAG, "Boost End");
@@ -2107,21 +2280,19 @@ void BrewEngine::controlLoop(void *arg)
 					resetPIDNextStep = true;
 				}
 			}
+
 			
-			// PID reset if needed due to new ramp step or boost just started/ended
 			if (resetPIDNextStep)
 			{
 					// Reset pid
 					instance->resetPitTime = true;
 					resetPIDNextStep = false;
 			}
-
-		}
-				
+		}		
 		
 		// Send notification
 		noMoreNotification = true;			// Unless there is remaining
-		if (!instance->notifications.empty() && !instance->inOverTime)
+		if (!instance->notifications.empty())
 		{
 			// filter out items that are not done
 			auto isNotDone = [](Notification *notification)
@@ -2328,11 +2499,17 @@ string BrewEngine::processCommand(const string &payLoad)
 			jCurrentTemps.push_back(jCurrentTemp);
 		}
 		
+		std::string outputStatusText = "PID: " + std::to_string(this->pidOrigOutput) + "%";
 
+		if (this->outputOverrides.has_value()) {
+			outputStatusText += " -> " + this->overrideText + std::to_string(this->outputOverrides.value()) + "%";
+		}
+		
 		resultData = {
 			{"temp", (double)((int)(this->temperature * 10)) / 10}, // round float to 1 digit for display
 			{"temps", jCurrentTemps},
-			{"targetTemp", (double)((int)(this->targetTemperature * 10)) / 10}, // round float to 1 digit for display,
+			{"targetTemp", (double)((int)(this->targetTemperature * 10)) / 10}, // target temp at the moment round float to 1 digit for display,
+			{"stepTargetTemp", (double)((int)(this->defaultTargetTemperature * 10)) / 10}, // The default step target temp
 //			{"manualOverrideTargetTemp", nullptr},
 			{"output", this->pidOutput},
 //			{"manualOverrideOutput", nullptr},
@@ -2341,15 +2518,17 @@ string BrewEngine::processCommand(const string &payLoad)
 			{"lastLogDateTime", lastLogDateTime},
 			{"tempLog", jTempLog},
 			{"runningVersion", this->runningVersion},
-			{"inOverTime", this->inOverTime},
+			{"inAdaptationTime", this->inAdaptationTime},
 			{"boostStatus", this->boostStatus},
 			{"powerUsage", (double)((int)(this->powerUsage / 3600)) / 1000},     // (this->powerUsage / 3600 / 1000)
 			{"currentStepName", this->currentStepName},
-			{"pidOrigOutput", this->pidOrigOutput},
-			{"outputOverrides", nullptr},
+//			{"pidOrigOutput", this->pidOrigOutput},
+//			{"outputOverrides", nullptr},
+			{"outputSummary", outputStatusText}, 
 			{"resetManualOutput", this->resetManualOutput},			
 			{"resetManualTemp", this->resetManualTemp},			
 			{"currentScheduleName", this->selectedMashScheduleName},
+			{"remainingTime", this->requestedRemainingTime.value_or(this->plannedRemainingSeconds)},			
 		};
 		
 		
@@ -2437,6 +2616,15 @@ string BrewEngine::processCommand(const string &payLoad)
 
 		// reset so effect is immidiate
 		this->resetPitTime = true;
+	}
+	else if (command == "SetRemainingTime")
+	{
+		if (this->controlRun && !this->restRun && data["remainingTime"].is_number())
+		{
+			// Simply store the user's requested seconds into the optional variable.
+			// The controlLoop will pick it up synchronously on its next iteration.
+			this->requestedRemainingTime = data["remainingTime"].get<long>();
+		}
 	}
 	else if (command == "Start")
 	{

@@ -33,16 +33,29 @@ const outputPercent = ref<number>();
 const targetTemperature = ref<number>();
 const manualOverrideTemperature = ref<number | null>(null);
 const manualOverrideOutput = ref<number | null>(null);
-const inOverTime = ref<boolean>(false);
+const inAdaptationTime = ref<boolean>(false);
 const boostStatus = ref<BoostStatus>(BoostStatus.Off);
 const powerUsage = ref<number>();
 const currentStepName = ref<string>();
-const pidOrigOutput = ref<number>();
-const outputOverrides = ref<number>();
+const outputSummary = ref<string>('');
+const isEditingOutput = ref<boolean>(false);
+const isClearing = ref<boolean>(false);
+const localOutput = ref<number | null>(null);
 const resetManualOutput = ref<boolean>();
 const resetManualTemp = ref<boolean>();
 const currentScheduleName = ref<string>();
 const labelYPos = ref<number>();
+
+const isEditingTime = ref<boolean>(false);
+const localRemainingMinutes = ref<number | null>(null);
+const timeValueOnFocus = ref<number | null>(null);
+
+const isEditingTemp = ref<boolean>(false);
+const isClearingTemp = ref<boolean>(false); 
+const localTargetTemp = ref<number | null>(null);
+const tempValueOnFocus = ref<number | null>(null);
+const backendStepTargetTemp = ref<number>(0); // Stores the step endpoint from ESP
+
 let audio: HTMLAudioElement | null = null;
 
 const intervalId = ref<any>();
@@ -365,7 +378,7 @@ const setNotifications = (newNotifications: Array<INotification>) => {
       const timeTill = notification.timePoint * 1000 - Date.now();
       // We do want to loose notification due to overtime, but these are very short in the past! max 10 seconds 
 	  // Overtime is gradual, we do not schedule notification popups during overtime. Instead an update will happen after overtime has ended
-      if ((timeTill > -10000) && !inOverTime.value) {
+      if (timeTill > -10000) {
         const timeoutId = window.setTimeout(() => {
           showNotificaton(notification, true);
         }, timeTill);
@@ -424,6 +437,60 @@ watch(selectedMashSchedule, (newVal, oldVal) => {
   }
 });
 
+watch([outputPercent, manualOverrideOutput], () => {
+  if (!isEditingOutput.value && !isClearing.value) {
+    localOutput.value = manualOverrideOutput.value !== null ? manualOverrideOutput.value : (outputPercent.value ?? 0);
+  }
+}, { immediate: true });
+
+// Step time control
+
+const onTimeFocus = () => {
+  isEditingTime.value = true;
+  // Capture the initial minute value at the moment the field gains focus
+  timeValueOnFocus.value = localRemainingMinutes.value;
+};
+
+const onTimeBlur = (event: any) => {
+  isEditingTime.value = false;
+
+  // If the user left the field entirely empty, abort and let the next getData loop restore it
+  if (localRemainingMinutes.value === null || event.target.value === '') {
+    return;
+  }
+
+  // If no change was made compared to the value when focused, do nothing
+  if (localRemainingMinutes.value === timeValueOnFocus.value) {
+    return;
+  }
+
+  // Value actually changed via step buttons or typing, transmit new target duration to ESP
+  changeRemainingTime(localRemainingMinutes.value);
+};
+
+const onTimeEnter = (event: any) => {
+  event.target.blur(); // Triggers the blur validation sequence above when Enter is pressed
+};
+
+const changeRemainingTime = async (minutesValue: number) => {
+  // Convert minutes back to raw seconds for the C++ backend
+  const targetSeconds = Math.max(0, minutesValue * 60);
+
+  const requestData = {
+    command: "SetRemainingTime",
+    data: {
+      remainingTime: targetSeconds,
+    },
+  };
+
+  await webConn?.doPostRequest(requestData);
+  
+  // Wipe the client version registry to force an immediate schedule layout fetch
+  lastRunningVersion.value = 0; 
+};
+
+// End of step time control
+
 let controller: AbortController | null = null;
 
 const getData = async () => {
@@ -449,13 +516,13 @@ const getData = async () => {
   temperature.value = apiResult.data.temp;
   outputPercent.value = apiResult.data.output;
   targetTemperature.value = apiResult.data.targetTemp;
+  backendStepTargetTemp.value = apiResult.data.stepTargetTemp || apiResult.data.targetTemp; // Save the static endpoint
   lastGoodDataDate.value = apiResult.data.lastLogDateTime;
-  inOverTime.value = apiResult.data.inOverTime;
+  inAdaptationTime.value = apiResult.data.inAdaptationTime;
   boostStatus.value = apiResult.data.boostStatus;
   powerUsage.value = apiResult.data.powerUsage;
   currentStepName.value = apiResult.data.currentStepName;
-  pidOrigOutput.value = apiResult.data.pidOrigOutput;
-  outputOverrides.value = apiResult.data.outputOverrides;
+  outputSummary.value = apiResult.data.outputSummary;
   resetManualOutput.value = apiResult.data.resetManualOutput;
   resetManualTemp.value = apiResult.data.resetManualTemp;
   if (status.value !== 'Idle') {
@@ -463,14 +530,25 @@ const getData = async () => {
     selectedMashSchedule.value = appStore.mashSchedules.find(ms => ms.name === scheduleName) || null;
   }
 
-  if (resetManualOutput.value) {
+  // Keep manualOverrideOutput safe from delayed backend reset packets while editing
+  if (resetManualOutput.value && !isEditingOutput.value) {
 	manualOverrideOutput.value = null;
   }
   
-  if (resetManualTemp.value) {
+  if (resetManualTemp.value && !isEditingTemp.value) {
 	manualOverrideTemperature.value = null;
   }
   
+  if (!isEditingTemp.value && !isClearingTemp.value) {
+    localTargetTemp.value = targetTemperature.value !== undefined ? Math.round(targetTemperature.value * 10) / 10 : 0;
+  }
+  
+  // Update local remaining time field when the user is not actively editing it
+  const serverRemainingSeconds = apiResult.data.remainingTime || 0;
+  if (!isEditingTime.value) {
+    // Convert seconds to display minutes (rounded up to nearest whole minute)
+    localRemainingMinutes.value = Math.max(0, Math.ceil(serverRemainingSeconds / 60));
+  }  
   
   const serverRunningVersion = apiResult.data.runningVersion;
   const now = Date.now();
@@ -484,9 +562,6 @@ const getData = async () => {
 	lastCheckedAt.value = Date.now();
   }
 
-  if (inOverTime.value) {
-    clearAllNotificationTimeouts();
-  }
 
   const tempData = [...rawData.value, ...apiResult.data.tempLog];
 
@@ -540,47 +615,178 @@ const getData = async () => {
   }
 };
 
+// Temperature override handling
+const onTempFocus = () => {
+  isEditingTemp.value = true;
+  
+  // 2. REQUIREMENT: On focus, show the static step final target (or current manual selection)
+  if (manualOverrideTemperature.value !== null) {
+    localTargetTemp.value = manualOverrideTemperature.value;
+  } else {
+    localTargetTemp.value = backendStepTargetTemp.value;
+  }
+  tempValueOnFocus.value = localTargetTemp.value;
+};
 
-const changeTargetTemp = (event: any) => {
-  if (event.target.value === undefined) {
+const onTempBlur = (event: any) => {
+  // If the clear button (X) was pressed, bypass blur logic entirely to prevent re-submitting values
+  if (isClearingTemp.value) {
     return;
   }
-    
-  const forceInt = Number.parseInt(event.target.value.toString(), 10);
+
+  isEditingTemp.value = false;
+
+  // If the user manually backspaced/cleared the field text completely
+  if (localTargetTemp.value === null || event.target.value === '') {
+    clearTempOverride();
+    return;
+  }
+
+  // If user clicked inside but made no modifications, do nothing
+  if (localTargetTemp.value === tempValueOnFocus.value) {
+    return;
+  }
+
+  // 3. REQUIREMENT: Value actually changed, transmit new manual target to ESP
+  applyTempOverride(localTargetTemp.value);
+};
+
+const onTempEnter = (event: any) => {
+  event.target.blur();
+};
+
+const applyTempOverride = async (value: number) => {
+  manualOverrideTemperature.value = value;
+  localTargetTemp.value = value;
 
   const requestData = {
     command: "SetOverrideTemp",
     data: {
-      targetTemp: forceInt,
+      targetTemp: value,
+    },
+  };
+  await webConn?.doPostRequest(requestData);
+};
+
+// 4. REQUIREMENT: Triggered via 'X' button. Instantly forces the default scheduled step target and exits edit mode
+const clearTempOverride = async () => {
+  isClearingTemp.value = true;
+  isEditingTemp.value = false;
+
+  // Clear frontend manual mode indicator
+  manualOverrideTemperature.value = null;
+  
+  // Instantly populate field with the default scheduled step target (not the ramp targetTemp!)
+  localTargetTemp.value = backendStepTargetTemp.value !== undefined ? Math.round(backendStepTargetTemp.value * 10) / 10 : 0;
+
+  // FIXED: Explicitly force the HTML input element to lose focus (exit edit mode)
+  if (document.activeElement instanceof HTMLElement) {
+    document.activeElement.blur();
+  }
+
+  const requestData = {
+    command: "SetOverrideTemp",
+    data: {
+      targetTemp: null, // Instructs C++ to return to schedule
     },
   };
 
-  webConn?.doPostRequest(requestData);
-  // todo capture error
+  await webConn?.doPostRequest(requestData);
+
+  // Briefly hold the lock to let Vuetify finish its async DOM cycles cleanly before releasing
+  setTimeout(() => {
+    isClearingTemp.value = false;
+  }, 100);
+};
+// Temperature override handling end
+
+
+
+// Dynamic label configuration
+const outputLabel = computed(() => {
+  return manualOverrideOutput.value !== null 
+    ? `${t('control.output')} - ${t('control.manual_override')}` 
+    : `${t('control.output')}`;
+});
+
+const onOutputFocus = () => {
+  isEditingOutput.value = true;
 };
 
-const changeOverrideOutput = (event: any) => {
-  if (event.target.value === undefined) {
+const onOutputBlur = (event: any) => {
+  // If the clear button (X) was pressed, bypass this blur logic entirely
+  if (isClearing.value) {
     return;
   }
-  const forceInt = Number.parseInt(event.target.value.toString(), 10);
+
+  isEditingOutput.value = false;
+  
+  // If the user manually backspaced/cleared the field text
+  if (localOutput.value === null || event.target.value === '') {
+    clearOutputOverride();
+    return;
+  }
+
+  // Determine the baseline value before this edit session
+  const currentActiveValue = manualOverrideOutput.value !== null ? manualOverrideOutput.value : (outputPercent.value ?? 0);
+  
+  if (localOutput.value === currentActiveValue) {
+    // If no real change was made, enforce proper visual cleanup if we were in auto
+    if (manualOverrideOutput.value === null) {
+      clearOutputOverride();
+    }
+  } else {
+    // Value actually changed, transmit new override to ESP
+    applyOutputOverride(localOutput.value);
+  }
+};
+
+const onOutputEnter = (event: any) => {
+  event.target.blur();
+};
+
+const applyOutputOverride = async (value: number) => {
+  let cleanValue = Math.max(0, Math.min(100, value));
+  manualOverrideOutput.value = cleanValue;
+  localOutput.value = cleanValue;
 
   const requestData = {
     command: "SetOverrideOutput",
     data: {
-      output: forceInt,
+      output: cleanValue,
     },
   };
-
-  webConn?.doPostRequest(requestData);
-  // todo capture error
+  await webConn?.doPostRequest(requestData);
 };
 
+const clearOutputOverride = async () => {
+  isClearing.value = true;
+  isEditingOutput.value = false;
+  
+  // Instantly clear states and force reset to backend automatic value
+  manualOverrideOutput.value = null;
+  localOutput.value = outputPercent.value ?? 0;
+  
+  const requestData = {
+    command: "SetOverrideOutput",
+    data: {
+      output: null,
+    },
+  };
+  
+  await webConn?.doPostRequest(requestData);
+  
+  // Wait for Vuetify's internal async operations to finish before releasing the lock
+  setTimeout(() => {
+    isClearing.value = false;
+  }, 100);
+};
 
 const setStartDateNow = () => {
   const now = new Date();
   startDateTime.value = Math.floor(now.getTime() / 1000);
 };
+
 
 const start = async () => {
   const requestData = {
@@ -638,8 +844,6 @@ const stopStir = async () => {
   webConn?.doPostRequest(requestData);
   // todo capture error
 };
-
-const debounceTargetTemp = debounce(changeTargetTemp, 1000);
 
 
 const initChart = () => {
@@ -769,10 +973,6 @@ onBeforeUnmount(() => {
 const displayStatus = computed(() => {
   let ds = status.value;
 
-  if (inOverTime.value) {
-    ds += " (Overtime)";
-  }
-
   if (boostStatus.value === BoostStatus.Boost) {
     ds += " (Boost)";
   }
@@ -781,6 +981,10 @@ const displayStatus = computed(() => {
     ds += " (Boost Rest)";
   }
 
+  if (inAdaptationTime.value) {
+    ds += " (Adaptive time)";
+  }
+  
   return ds;
 });
 
@@ -821,43 +1025,6 @@ const labelTargetTemp = computed(() => {
           <v-text-field v-model="displayStatus" readonly :label="$t('control.status')" />
         </v-col>
         <v-col cols="12" md="3">
-          <v-text-field v-model="temperature" readonly :label="`${$t('control.temperature')} (${appStore.tempUnit})`" />
-        </v-col>
-        <v-col cols="12" md="3">
-          <v-text-field v-model="targetTemperature" readonly :label="`${$t('control.target')} (${appStore.tempUnit})`" />
-        </v-col>
-		<v-col cols="12" md="3">
-          <v-text-field
-            v-model.number="outputPercent"
-            type="number"
-            :label="$t('control.output')"
-            readonly />
-        </v-col>
-      </v-row>
-      <v-row no-gutters>
-		<v-col cols="12" md="3">
-          <v-text-field
-            v-model.number="pidOrigOutput"
-            type="number"
-            :label="$t('control.pid_orig_output')"
-            readonly />
-        </v-col>
-		<v-col cols="12" md="3">
-          <v-text-field
-            v-model.number="outputOverrides"
-            type="number"
-            :label="$t('control.output_overrides')"
-            readonly />
-        </v-col>
-		<v-col cols="12" md="3">
-         <v-text-field v-model="manualOverrideTemperature" type="number" :label="labelTargetTemp" @change="changeTargetTemp" />  
-        </v-col>
-        <v-col cols="12" md="3">
-         <v-text-field v-model="manualOverrideOutput" type="number" :label="$t('control.set_override_output')" @change="changeOverrideOutput" />  
-        </v-col>
-      </v-row>
-      <v-row no-gutters>
-        <v-col cols="12" md="3">
           <v-select
             :label="$t('control.mashSchedule')"
             :readonly="status !== 'Idle'"
@@ -871,15 +1038,72 @@ const labelTargetTemp = computed(() => {
         <v-col cols="12" md="3">
 		  <v-text-field v-model="currentStepName" readonly :label="$t('control.current_step_name')" />
         </v-col>
+		<v-col cols="12" md="3">
+		  <v-text-field
+			v-model.number="localRemainingMinutes"
+			type="number"
+			min="0"
+			step="1"
+			:disabled="status !== 'Running' "
+			:label="$t('control.remaining_time') + ' (perc)'"
+			:class="isEditingTime ? 'manual-mode-text' : 'automatic-mode-text'"
+			@focus="onTimeFocus"
+			@blur="onTimeBlur"
+			@keydown.enter="onTimeEnter"
+		  />
+		</v-col>
+      </v-row>
+      <v-row no-gutters>
         <v-col cols="12" md="3">
-          <v-text-field v-model="powerUsage" readonly :label="$t('control.power_consumption')" />          
+          <v-text-field v-model="temperature" readonly :label="`${$t('control.temperature')} (${appStore.tempUnit})`" />
         </v-col>
-
+        <v-col cols="12" md="3">
+		  <v-text-field
+			v-model.number="localTargetTemp"
+			type="number"
+			step="1"
+			:label="labelTargetTemp"
+			:class="manualOverrideTemperature === null ? 'automatic-mode-text' : 'manual-mode-text'"
+			:bg-color="manualOverrideTemperature !== null ? 'rgba(255, 112, 67, 0.25)' : ''"
+			:clearable="manualOverrideTemperature !== null"
+			@click:clear="clearTempOverride"
+			@focus="onTempFocus"
+			@blur="onTempBlur"
+			@keydown.enter="onTempEnter"
+		  />
+        </v-col>
+		<v-col cols="12" md="3">
+          <v-text-field
+			v-model="outputSummary"
+			:label="$t('control.output_overrides')"
+			readonly />
+        </v-col>
+		<v-col cols="12" md="3">
+		  <v-text-field
+			v-model.number="localOutput"
+			type="number"
+			min="0"
+			max="100"
+			:label="outputLabel"
+			:class="manualOverrideOutput === null ? 'automatic-mode-text' : 'manual-mode-text'"
+			:bg-color="manualOverrideOutput !== null ? 'rgba(255, 112, 67, 0.25)' : ''"
+			:clearable="manualOverrideOutput !== null"
+			@click:clear="clearOutputOverride"
+			@focus="onOutputFocus"
+			@blur="onOutputBlur"
+			@keydown.enter="onOutputEnter"
+		  />
+        </v-col>
       </v-row>
       <v-row>
         <v-col cols="12" md="6">
           <v-btn v-if="status === 'Idle'" color="success" class="mt-4" block @click="start"> {{ $t('control.start') }} </v-btn>
           <v-btn v-else color="error" class="mt-4" block @click="stop"> {{ $t('control.stop') }} </v-btn>
+        </v-col>
+        <v-col cols="12" md="3">
+        </v-col>
+        <v-col cols="12" md="3">
+          <v-text-field v-model="powerUsage" readonly :label="$t('control.power_consumption')" />          
         </v-col>
 
       </v-row>
