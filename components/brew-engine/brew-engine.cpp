@@ -1027,6 +1027,7 @@ void BrewEngine::start()
 		this->inAdaptationTime = false;
 		this->boostStatus = Off;
 		this->targetTemperature = this->temperature; // If nothing is selected
+		this->defaultTargetTemperature = this->targetTemperature;
 
 		// clear old temp log
 		this->tempLog.clear();
@@ -2072,6 +2073,7 @@ void BrewEngine::controlLoop(void *arg)
 					instance->statusText = "Resting";
 					instance->resetPitTime = true;
 					instance->currentStepName = "";
+					instance->defaultTargetTemperature = 0;
 					ESP_LOGI(TAG, "No more step");
 				}	
 			}
@@ -2163,7 +2165,7 @@ void BrewEngine::controlLoop(void *arg)
 			{
 				instance->targetTemperature = currentStep->temperature;
 			}
-			if (!currentStep->extendIfNeeded)
+			else if (!currentStep->extendIfNeeded)
 			// 2. FIXED LENGTH RAMP
 			{
 				// In fixed time ramp we calculate the elapsed time in percent. Add PID loop time as the goal temp is targeted at the beginning of the last PID loop

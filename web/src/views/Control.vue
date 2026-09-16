@@ -318,8 +318,8 @@ const chartData = computed(() => {
     if (extraSet.temps.length > 0) {
       // Get the last item in the temps array
       const lastTempRecord = extraSet.temps[extraSet.temps.length - 1];
-      // Format to 2 decimal places to match the C++ precision
-      currentSensorValueText = ` (${lastTempRecord.temp.toFixed(2)}°)`;
+      // Format to 1 decimal places to match the UI precision
+      currentSensorValueText = ` (${lastTempRecord.temp.toFixed(1)}°)`;
     }
 
     let label = extraSet.sensor;
@@ -703,11 +703,11 @@ const clearTempOverride = async () => {
 
 
 // Dynamic label configuration
-const outputLabel = computed(() => {
-  return manualOverrideOutput.value !== null 
-    ? `${t('control.output')} - ${t('control.manual_override')}` 
-    : `${t('control.output')}`;
-});
+//const outputLabel = computed(() => {
+//  return manualOverrideOutput.value !== null 
+//    ? `${t('control.output')} - ${t('control.manual_override')}` 
+//    : `${t('control.output')}`;
+//});
 
 const onOutputFocus = () => {
   isEditingOutput.value = true;
@@ -906,7 +906,12 @@ const chartOptions = computed<any>(() => {
       },
     },
     plugins: {
-      annotation: {
+      legend: {
+        display: true,
+        labels: {
+          color: '#ffffff', // Explicitly forces the legend text color to white
+        }
+      },      annotation: {
         annotations: chartAnnotations.value,
       },
     },
@@ -988,16 +993,10 @@ const displayStatus = computed(() => {
   return ds;
 });
 
-const labelTargetTemp = computed(() => {
-  if (selectedMashSchedule.value == null) {
-    return `${t("control.set_target")} (${appStore.tempUnit})`;
-  }
-
-  return `${t("control.set_target_override")} (${appStore.tempUnit})`;
-});
 </script>
 
 <template>
+  <!-- Notification dialog pop-up -->
   <v-dialog v-model="notificationDialog" max-width="500px">
     <v-card>
       <v-toolbar density="compact" color="dialog-header">
@@ -1017,110 +1016,187 @@ const labelTargetTemp = computed(() => {
 
   <v-container class="spacing-playground pa-6" fluid>
     <v-form fast-fail @submit.prevent>
+      <!-- Chart Row -->
       <v-row style="height: 50vh">
         <Line v-if="chartInitDone && chartData" :options="chartOptions" :data="chartData" />
       </v-row>
-      <v-row no-gutters>
-        <v-col cols="12" md="3">
-          <v-text-field v-model="displayStatus" readonly :label="$t('control.status')" />
+      
+      <!-- First Control Row: Increased top margin (mt-6) to separate from chart, and gap (ga-4) for cell spacing -->
+      <v-row no-gutters class="mt-6 ga-4">
+        <!-- READ-ONLY LIVE DATA: Main status string -->
+        <v-col cols="12" md="3" class="pa-1">
+          <v-text-field 
+            v-model="displayStatus" 
+            readonly 
+            variant="plain" 
+            base-color="white" 
+            color="white" 
+            :label="$t('control.status')" 
+          />
         </v-col>
-        <v-col cols="12" md="3">
+        
+        <!-- TRICKY SELECT FIELD: Outlined & dark grey when Idle -->
+        <v-col cols="12" md="3" class="pa-1">
           <v-select
+            v-model="selectedMashSchedule"
             :label="$t('control.mashSchedule')"
             :readonly="status !== 'Idle'"
-            v-model="selectedMashSchedule"
             :items="appStore.mashSchedules"
             item-title="name"
             :filled="appStore.mashSchedules"
             :clearable="status === 'Idle'"
-            return-object />
+            return-object
+            base-color="white"
+            color="white"
+            :variant="status === 'Idle' ? 'outlined' : 'plain'"
+            :bg-color="status === 'Idle' ? '#1E1E1E' : ''"
+            :append-inner-icon="status !== 'Idle' ? 'mdi-lock-outline' : ''"
+          />
         </v-col>
-        <v-col cols="12" md="3">
-		  <v-text-field v-model="currentStepName" readonly :label="$t('control.current_step_name')" />
+        
+        <!-- READ-ONLY LIVE DATA: Current step name -->
+        <v-col cols="12" md="3" class="pa-1">
+          <v-text-field 
+            v-model="currentStepName" 
+            readonly 
+            variant="plain" 
+            base-color="white" 
+            color="white" 
+            :label="$t('control.current_step_name')" 
+          />
         </v-col>
-		<v-col cols="12" md="3">
-		  <v-text-field
-			v-model.number="localRemainingMinutes"
-			type="number"
-			min="0"
-			step="1"
-			:disabled="status !== 'Running' "
-			:label="$t('control.remaining_time') + ' (perc)'"
-			:class="isEditingTime ? 'manual-mode-text' : 'automatic-mode-text'"
-			@focus="onTimeFocus"
-			@blur="onTimeBlur"
-			@keydown.enter="onTimeEnter"
-		  />
-		</v-col>
-      </v-row>
-      <v-row no-gutters>
-        <v-col cols="12" md="3">
-          <v-text-field v-model="temperature" readonly :label="`${$t('control.temperature')} (${appStore.tempUnit})`" />
-        </v-col>
-        <v-col cols="12" md="3">
-		  <v-text-field
-			v-model.number="localTargetTemp"
-			type="number"
-			step="1"
-			:label="labelTargetTemp"
-			:class="manualOverrideTemperature === null ? 'automatic-mode-text' : 'manual-mode-text'"
-			:bg-color="manualOverrideTemperature !== null ? 'rgba(255, 112, 67, 0.25)' : ''"
-			:clearable="manualOverrideTemperature !== null"
-			@click:clear="clearTempOverride"
-			@focus="onTempFocus"
-			@blur="onTempBlur"
-			@keydown.enter="onTempEnter"
-		  />
-        </v-col>
-		<v-col cols="12" md="3">
+        
+        <!-- CONFIGURABLE INPUTFIELD: Remaining time in minutes -->
+        <v-col cols="12" md="2" class="pa-1">
           <v-text-field
-			v-model="outputSummary"
-			:label="$t('control.output_overrides')"
-			readonly />
-        </v-col>
-		<v-col cols="12" md="3">
-		  <v-text-field
-			v-model.number="localOutput"
-			type="number"
-			min="0"
-			max="100"
-			:label="outputLabel"
-			:class="manualOverrideOutput === null ? 'automatic-mode-text' : 'manual-mode-text'"
-			:bg-color="manualOverrideOutput !== null ? 'rgba(255, 112, 67, 0.25)' : ''"
-			:clearable="manualOverrideOutput !== null"
-			@click:clear="clearOutputOverride"
-			@focus="onOutputFocus"
-			@blur="onOutputBlur"
-			@keydown.enter="onOutputEnter"
-		  />
+            v-model.number="localRemainingMinutes"
+            type="number"
+            min="0"
+            step="1"
+            variant="outlined"
+            base-color="white"
+            color="white"
+            :bg-color="status !== 'Running' ? '#323232' : '#1E1E1E'"
+            :disabled="status !== 'Running'"
+            :label="$t('control.remaining_time') + ' (perc)'"
+            :class="isEditingTime ? 'manual-mode-text' : 'automatic-mode-text'"
+            @focus="onTimeFocus"
+            @blur="onTimeBlur"
+            @keydown.enter="onTimeEnter"
+          />
         </v-col>
       </v-row>
-      <v-row>
-        <v-col cols="12" md="6">
-          <v-btn v-if="status === 'Idle'" color="success" class="mt-4" block @click="start"> {{ $t('control.start') }} </v-btn>
-          <v-btn v-else color="error" class="mt-4" block @click="stop"> {{ $t('control.stop') }} </v-btn>
+      
+      <!-- Second Control Row: Added gap (ga-4) to keep consistent horizontal spacing -->
+      <v-row no-gutters class="mt-2 ga-4">
+        <!-- READ-ONLY LIVE DATA: Current system temperature -->
+        <v-col cols="12" md="3" class="pa-1">
+          <v-text-field 
+            v-model="temperature" 
+            readonly 
+            variant="plain" 
+            base-color="white" 
+            color="white" 
+            :label="`${$t('control.temperature')} (${appStore.tempUnit})`" 
+          />
         </v-col>
-        <v-col cols="12" md="3">
+        
+        <!-- CONFIGURABLE INPUTFIELD: Target temperature override control -->
+        <v-col cols="12" md="3" class="pa-1">
+          <v-text-field
+            v-model.number="localTargetTemp"
+            type="number"
+            step="1"
+            variant="outlined"
+            base-color="white"
+            color="white"
+            :label="`${$t('control.target')} (${appStore.tempUnit})`" 
+            :class="manualOverrideTemperature === null ? 'automatic-mode-text' : 'manual-mode-text'"
+            :bg-color="manualOverrideTemperature !== null ? 'rgba(255, 112, 67, 0.25)' : '#1E1E1E'"
+            :clearable="manualOverrideTemperature !== null"
+            @click:clear="clearTempOverride"
+            @focus="onTempFocus"
+            @blur="onTempBlur"
+            @keydown.enter="onTempEnter"
+          />
         </v-col>
-        <v-col cols="12" md="3">
-          <v-text-field v-model="powerUsage" readonly :label="$t('control.power_consumption')" />          
+        
+        <!-- READ-ONLY LIVE DATA: Combined PID and Output Override string -->
+        <v-col cols="12" md="3" class="pa-1">
+          <v-text-field
+            v-model="outputSummary"
+            variant="plain"
+            base-color="white"
+            color="white"
+            :label="$t('control.output_summary')"
+            readonly 
+          />
         </v-col>
-
+        
+        <!-- CONFIGURABLE INPUTFIELD: Manual PID output percentage -->
+        <v-col cols="12" md="2" class="pa-1">
+          <v-text-field
+            v-model.number="localOutput"
+            type="number"
+            min="0"
+            max="100"
+            variant="outlined"
+            base-color="white"
+            color="white"
+            :label="$t('control.output')"
+            :class="manualOverrideOutput === null ? 'automatic-mode-text' : 'manual-mode-text'"
+            :bg-color="manualOverrideOutput !== null ? 'rgba(255, 112, 67, 0.25)' : '#1E1E1E'"
+            :clearable="manualOverrideOutput !== null"
+            @click:clear="clearOutputOverride"
+            @focus="onOutputFocus"
+            @blur="onOutputBlur"
+            @keydown.enter="onOutputEnter"
+          />
+        </v-col>
+      </v-row>
+      
+      <!-- Action Buttons and Power Metrics: tight top margin (mt-1) to reduce dead space below inputs -->
+      <v-row no-gutters class="mt-1 ga-4">
+        <v-col cols="12" md="6" class="pa-1">
+          <v-btn v-if="status === 'Idle'" color="success" class="mt-2" block @click="start"> {{ $t('control.start') }} </v-btn>
+          <v-btn v-else color="error" class="mt-2" block @click="stop"> {{ $t('control.stop') }} </v-btn>
+        </v-col>
+        <v-col cols="12" md="3" class="pa-1">
+          <!-- Hidden/Empty spacer maintaining row density -->
+        </v-col>
+        <!-- READ-ONLY LIVE DATA: Power consumption -->
+        <v-col cols="12" md="2" class="pa-1">
+          <v-text-field 
+            v-model="powerUsage" 
+            readonly 
+            variant="plain" 
+            base-color="white" 
+            color="white" 
+            :label="$t('control.power_consumption')" 
+          />          
+        </v-col>
       </v-row>
 
-      <div class="text-subtitle-2 mt-4 mb-2">{{ $t('control.stir_control') }}</div>
+      <!-- Stir Control Section -->
+      <div class="text-subtitle-2 mt-6 mb-2">{{ $t('control.stir_control') }}</div>
       <v-divider :thickness="7" />
 
-      <v-row>
-        <v-col cols="12" md="3">
-          <v-text-field v-model="stirStatus" readonly :label="$t('control.status')" />
+      <v-row no-gutters class="mt-2">
+        <!-- READ-ONLY LIVE DATA: Motor / Stirrer current status -->
+        <v-col cols="12" md="3" class="pa-1">
+          <v-text-field 
+            v-model="stirStatus" 
+            readonly 
+            variant="plain" 
+            base-color="white" 
+            color="white" 
+            :label="$t('control.status')" 
+          />
         </v-col>
       </v-row>
 
       <v-row>
-
         <v-col cols="12" md="">
-
           <v-range-slider
             v-model="stirInterval"
             :label="$t('control.interval')"
@@ -1128,21 +1204,26 @@ const labelTargetTemp = computed(() => {
             thumb-label="always"
             :max="stirMax">
             <template v-slot:append>
+              <!-- CONFIGURABLE INPUTFIELD: Max range configuration for stirrer loop -->
               <v-text-field
                 v-model.number="stirMax"
                 hide-details
                 single-line
                 type="number"
                 variant="outlined"
+                base-color="white"
+                color="white"
+                bg-color="#1E1E1E"
                 style="width: 70px"
                 density="compact"
-                :label="$t('control.timespan')" />
+                :label="$t('control.timespan')" 
+              />
             </template>
           </v-range-slider>
-
         </v-col>
       </v-row>
 
+      <!-- Stir Action Control Trigger Buttons -->
       <v-row>
         <v-col cols="12" md="6">
           <v-btn v-if="stirStatus === 'Idle'" color="success" class="mt-4" block @click="startStir"> {{ $t('control.start') }} </v-btn>
