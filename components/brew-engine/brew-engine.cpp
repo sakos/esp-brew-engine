@@ -1414,7 +1414,6 @@ void BrewEngine::readLoop(void *arg)
 {
 	BrewEngine *instance = (BrewEngine *)arg;
 
-	int it = 4; 	// to start with logging after 1s
 	int lastTemp = 0;
 	bool needed = false;
 	bool working = false;
@@ -1715,33 +1714,30 @@ void BrewEngine::readLoop(void *arg)
 			auto lastValue = instance->tempLog.rbegin();
 			lastTemp = lastValue->second;
 			
-			it++;
 
 			// Check if 60 or more seconds have passed since the last log entry
-			// Keeps running after execution stopped 
-			if (current_raw_time - lastValue->first >= 37)  // Not too frequent not to rare...
+			// Keeps running after execution stopped with lower frequency, and even if the temp is constant
+			if (current_raw_time - lastValue->first >= 60)  // Not too frequent not to rare...
 			{
 				instance->forceTempLog = true;
-				it = 0;		//reset log interval counter
 			}
 
 			// Check if regular interval loggin is needed during run
-			if (it > 5)
+			if (current_raw_time - lastValue->first >= 10)
 			{
-				it = 0;
 				if (((lastTemp < (int)avg ) || (lastTemp > (int)(avg+0.9))) && instance->controlRun )		
 				{
 					instance->forceTempLog = true;
 				}
 				else
 				{
-					ESP_LOGI(TAG, "Skip same - temperature unchanged and timeout not reached");
+					ESP_LOGI(TAG, "Skip same - temperature unchanged and longer timeout not reached");
 				}
 			}
-/*			if (current_raw_time - lastValue->first < 5)  // Prevent too frequent logging Mainly trgiggered by step start
+			else  // Prevent too frequent logging Mainly trgiggered by step start
 			{
-				instance->forceTempLog = false;  //override
-			} */
+				instance->forceTempLog = false;  //override. No need to log since there was a recent log
+			}
 		}
 
 		if (instance->forceTempLog)		
