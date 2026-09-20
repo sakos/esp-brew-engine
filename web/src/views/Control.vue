@@ -38,9 +38,12 @@ const boostStatus = ref<BoostStatus>(BoostStatus.Off);
 const powerUsage = ref<number>();
 const currentStepName = ref<string>();
 const outputSummary = ref<string>('');
+const pidDiagText = ref<string>('');
 const isEditingOutput = ref<boolean>(false);
 const isClearing = ref<boolean>(false);
 const localOutput = ref<number | null>(null);
+const outputValueOnFocus = ref<number | null>(null);
+
 const resetManualOutput = ref<boolean>();
 const resetManualTemp = ref<boolean>();
 const currentScheduleName = ref<string>();
@@ -85,6 +88,7 @@ const notifications = ref<Array<INotification>>([]);
 const selectedMashSchedule = ref<IMashSchedule | null>(null);
 
 const currentTemps = ref<Array<ITempLog>>([]);
+const currentHeaterData = ref<Array<{ time: number; output: number }>>([]);
 
 const startDateTime = ref<number>();
 const speechVoice = ref<SpeechSynthesisVoice | null>(null);
@@ -276,6 +280,13 @@ const chartData = computed(() => {
     y: item.temp,
   }));
 
+  const heaterChartPoints = currentHeaterData.value
+  .filter((item) => item.output > 0)
+  .map((item) => ({
+    x: item.time * 1000,
+    y: item.output,
+  }));  
+
   // also add the current value, out controller doesn't send identical temp point for performance reasons
   if (lastGoodDataDate.value != null && temperature.value != null) {
     realData.push({
@@ -283,8 +294,8 @@ const chartData = computed(() => {
       y: temperature.value,
     });
   }
-
-  let datasets = [
+    
+  let datasets: any[] = [
     {
       label: `${t("control.avg")} ${appStore.tempUnit}`,
       backgroundColor: "rgba(255, 255, 255, 0.7)",
@@ -305,7 +316,20 @@ const chartData = computed(() => {
       fill: true,
       data: scheduleData,
     },
-  ];
+    {
+      label: "Heater (%)",
+      backgroundColor: "rgba(139, 0, 0, 0.4)",
+      borderColor: "rgb(139, 0, 0)",
+      lineTension: 0,
+      xAxisID: "xAxis",
+      yAxisID: "yAxisHeater", 
+      fill: false,
+      pointRadius: 0,
+//      borderWidth: 1.5,
+      borderDash: [2, 3],
+     data: heaterChartPoints, 
+    },
+ ];
 
   const extraDataSets = currentTemps.value.map((extraSet) => {
     const setData = extraSet.temps.map((temp) => ({
@@ -414,6 +438,7 @@ const getRunningSchedule = async () => {
 
 const resetAll = () => {
   currentTemps.value = [];
+  currentHeaterData.value = [];
   executionSteps.value = [];
   rawData.value = [];
   notificationsShown.value = [];
@@ -523,6 +548,7 @@ const getData = async () => {
   powerUsage.value = apiResult.data.powerUsage;
   currentStepName.value = apiResult.data.currentStepName;
   outputSummary.value = apiResult.data.outputSummary;
+  pidDiagText.value = apiResult.data.pidDiagText;
   resetManualOutput.value = apiResult.data.resetManualOutput;
   resetManualTemp.value = apiResult.data.resetManualTemp;
   if (status.value !== 'Idle') {
@@ -599,6 +625,13 @@ const getData = async () => {
     });
   }
 
+  if (apiResult.data.output !== undefined && apiResult.data.output !== null) {
+    currentHeaterData.value.push({
+      time: Math.floor(Date.now() / 1000),
+      output: apiResult.data.output
+    });
+  }
+  
   // we only need to get the tempsensort once
   if (tempSensors.value == null || tempSensors.value.length === 0) {
     const requestData3 = {
@@ -711,34 +744,31 @@ const clearTempOverride = async () => {
 
 const onOutputFocus = () => {
   isEditingOutput.value = true;
+  // Capture the initial output value at the moment the field gains focus
+  outputValueOnFocus.value = localOutput.value;
 };
 
 const onOutputBlur = (event: any) => {
-  // If the clear button (X) was pressed, bypass this blur logic entirely
+  // If the clear button (X) was pressed, bypass this blur logic entirely to avoid race conditions
   if (isClearing.value) {
     return;
   }
 
   isEditingOutput.value = false;
   
-  // If the user manually backspaced/cleared the field text
+  // If the user manually backspaced/cleared the field text completely
   if (localOutput.value === null || event.target.value === '') {
     clearOutputOverride();
     return;
   }
 
-  // Determine the baseline value before this edit session
-  const currentActiveValue = manualOverrideOutput.value !== null ? manualOverrideOutput.value : (outputPercent.value ?? 0);
-  
-  if (localOutput.value === currentActiveValue) {
-    // If no real change was made, enforce proper visual cleanup if we were in auto
-    if (manualOverrideOutput.value === null) {
-      clearOutputOverride();
-    }
-  } else {
-    // Value actually changed, transmit new override to ESP
-    applyOutputOverride(localOutput.value);
+  // If no change was made compared to the value when focused, do nothing and let clear handlers execute
+  if (localOutput.value === outputValueOnFocus.value) {
+    return;
   }
+
+  // Value actually changed via step buttons or typing, transmit new manual target override to ESP
+  applyOutputOverride(localOutput.value);
 };
 
 const onOutputEnter = (event: any) => {
@@ -766,6 +796,11 @@ const clearOutputOverride = async () => {
   // Instantly clear states and force reset to backend automatic value
   manualOverrideOutput.value = null;
   localOutput.value = outputPercent.value ?? 0;
+
+  // FIXED: Explicitly force the HTML input element to lose focus (exit edit mode)
+  if (document.activeElement instanceof HTMLElement) {
+    document.activeElement.blur();
+  }
   
   const requestData = {
     command: "SetOverrideOutput",
@@ -864,6 +899,14 @@ const chartOptions = computed<any>(() => {
     responsive: true,
     maintainAspectRatio: false,
     animation: false, // Disable all animations, does weird things when adding data
+    // === Continuous mouse tracking along the timeline ===
+    // === Easy mouse targeting with multi-line display ===
+    interaction: {
+      mode: 'x',    		// Finds the nearest points to your mouse based on time
+      axis: 'x',          // Looks horizontally, making stacked/overlapping lines easy to hit
+      intersect: false,   // NO need to precisely hover over the thin  lines!
+      radius: 20,         
+	  },
     scales: {
       xAxis: {
         title: {
@@ -904,6 +947,12 @@ const chartOptions = computed<any>(() => {
         },
         grid: { color: "#bdbdbc" },
       },
+	  yAxisHeater: {
+        type: "linear",
+        min: 0,               // Graph bottom fixed 0%
+        max: 100,             // Graph top fixed 105%
+        display: false,       // Hide grid, axis, numbers
+      },
     },
     plugins: {
       legend: {
@@ -911,7 +960,8 @@ const chartOptions = computed<any>(() => {
         labels: {
           color: '#ffffff', // Explicitly forces the legend text color to white
         }
-      },      annotation: {
+      },      
+	  annotation: {
         annotations: chartAnnotations.value,
       },
     },
@@ -1076,9 +1126,9 @@ const displayStatus = computed(() => {
             variant="outlined"
             base-color="white"
             color="white"
-            :bg-color="status !== 'Running' ? '#323232' : '#1E1E1E'"
-            :disabled="status !== 'Running'"
-            :label="$t('control.remaining_time') + ' (perc)'"
+            :bg-color="(status !== 'Running' || !selectedMashSchedule) ? '#323232' : '#1E1E1E'"
+            :disabled="status !== 'Running' || !selectedMashSchedule"
+            :label="$t('control.remaining_time')"
             :class="isEditingTime ? 'manual-mode-text' : 'automatic-mode-text'"
             @focus="onTimeFocus"
             @blur="onTimeBlur"
@@ -1097,6 +1147,7 @@ const displayStatus = computed(() => {
             variant="plain" 
             base-color="white" 
             color="white" 
+            :input-props="{ style: 'font-size: 24px; font-weight: bold;' }"
             :label="`${$t('control.temperature')} (${appStore.tempUnit})`" 
           />
         </v-col>
@@ -1161,9 +1212,19 @@ const displayStatus = computed(() => {
           <v-btn v-if="status === 'Idle'" color="success" class="mt-2" block @click="start"> {{ $t('control.start') }} </v-btn>
           <v-btn v-else color="error" class="mt-2" block @click="stop"> {{ $t('control.stop') }} </v-btn>
         </v-col>
+
+        <!-- READ-ONLY LIVE DATA: Combined PID diagnostics data -->
         <v-col cols="12" md="3" class="pa-1">
-          <!-- Hidden/Empty spacer maintaining row density -->
+          <v-text-field
+            v-model="pidDiagText"
+            variant="plain"
+            base-color="white"
+            color="white"
+            :label="$t('control.pidDiagText')"
+            readonly 
+          />
         </v-col>
+
         <!-- READ-ONLY LIVE DATA: Power consumption -->
         <v-col cols="12" md="2" class="pa-1">
           <v-text-field 

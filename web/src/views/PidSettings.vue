@@ -186,8 +186,6 @@ const save = async () => {
         </v-col>
       </v-row>
 
-      <div class="text-subtitle-2 mt-4 mb-2">{{ $t('pidSettings.boost') }}</div>
-
       <v-row class="mt-4 mb-2">
         <v-col cols="12" md="3">
           <v-text-field type="number" v-model.number="pidSettings.boostModeUntil" :label="$t('pidSettings.boost_until')" :min="0" :max="100">
@@ -201,6 +199,8 @@ const save = async () => {
             </v-text-field>
         </v-col>
       </v-row>
+
+      <div class="text-subtitle-2 mt-4 mb-2">{{ $t('pidSettings.heater') }}</div>
 
       <v-row class="mt-4 mb-2">
         <v-col cols="12" md="3">
