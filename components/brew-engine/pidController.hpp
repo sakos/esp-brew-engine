@@ -27,6 +27,11 @@ private:
     // instead of micro-fractions or massive hundreds.
     const double I_SCALE = 1.0 / 1000.0; // User input '1.0' becomes 0.001 internally
     const double D_SCALE = 10.0;         // User input '1.0' becomes 10.0 internally
+    const double D_DYNSCALE = 2.0;         // Derivative D factor
+
+    // --- DIAGNOSTICS STORAGE ---
+    // Pre-allocated string to store the formatted P, I, D terms without heap fragmentation
+    std::string lastDiagString = "P:    0.0 I:    0.0 D:    0.0";
 
 public:
     bool debug = false;
@@ -53,7 +58,14 @@ public:
         this->kd = d * D_SCALE; 
     }	
 
-    // dt: elapsed time since last execution in seconds (e.g., 20.0 or 30.0)
+     // --- PUBLIC GETTER FOR DIAGNOSTICS ---
+    // Safely returns the pre-formatted string from the last execution
+    std::string getLastDiagString() const 
+    {
+        return this->lastDiagString;
+    }
+
+	// dt: elapsed time since last execution in seconds (e.g., 20.0 or 30.0)
     double getOutput(double actual, double setpoint, bool inhold, double dt)
     {
         if (dt <= 0.0) dt = 1.0; // Safety fallback for invalid dt
@@ -102,14 +114,14 @@ public:
 			
 			// Calculate absolute values for safe magnitude comparison
 			double abs_error = std::abs(error);
-			double abs_change = std::abs(error - previousError);
+			double abs_change = D_DYNSCALE * std::abs(error - previousError);
 
 			// Default scaling factor is 1.0 (full braking)
 			double d_scale = 1.0;
 
 			// If the change rate is smaller than the distance to target, 
 			// damp the derivative brake proportionally.
-			if (abs_error > 0.0 && abs_change < abs_error)
+			if (abs_error > 0.0 && (abs_change) < abs_error)
 			{
 				d_scale = abs_change / abs_error;
 			}
@@ -127,6 +139,20 @@ public:
 
 		ESP_LOGI("PID tune", "Act: %.2f | Set: %.2f | Hold: %s | P: %.2f | I: %.2f | D: %.2f | PID: %.2f (dt: %.1fs)", 
          actual, setpoint, inhold ? "true" : "false", p, i, d, output, dt);
+		 
+		// --- FORMAT AND CLAMP DIAGNOSTICS STRING ---
+        // Clamp raw terms to a safe UI boundary between -199.0 and 199.0
+        double clamped_p = std::clamp(p, -199.0, 199.0);
+        double clamped_i = std::clamp(i, -199.0, 199.0);
+        double clamped_d = std::clamp(d, -199.0, 199.0);
+
+        char buffer[45];
+        // %6.1f ensures a fixed 6-character width, 1 decimal place, padded with leading spaces (no leading zeros)
+        std::snprintf(buffer, sizeof(buffer), "P: %6.1f I: %6.1f D: %6.1f", 
+                      clamped_p, clamped_i, clamped_d);
+        
+        // Fast assignment into the pre-allocated string
+        this->lastDiagString = buffer; 
 
         return output;
     }
