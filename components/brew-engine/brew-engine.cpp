@@ -1697,32 +1697,57 @@ void BrewEngine::readLoop(void *arg)
 
 
 
-		// Logging and MQTT section (unchanged)
-		if (instance->controlRun)
-		{
+		// Temp logging for graph
+
+		time_t current_raw_time = time(0); 
+		
+		if (instance->tempLog.empty() )		
+		{	// Temp logging is not ongoing
+			if (instance->controlRun)
+			{
+				instance->forceTempLog = true;		// Trigger temp log collection
+			}
+		}
+		else
+		{  // Temp logging is running
+			auto lastValue = instance->tempLog.rbegin();
+			lastTemp = lastValue->second;
+			
 			it++;
+
+			// Check if 60 or more seconds have passed since the last log entry
+			// Keeps running after execution stopped 
+			if (current_raw_time - lastValue->first >= 37)  // Not too frequent not to rare...
+			{
+				instance->forceTempLog = true;
+				it = 0;		//reset log interval counter
+			}
+
+			// Check if regular interval loggin is needed during run
 			if (it > 5)
 			{
 				it = 0;
-
-				if (!instance->tempLog.empty())
+				if (((lastTemp < (int)avg ) || (lastTemp > (int)(avg+0.9))) && instance->controlRun )		
 				{
-					auto lastValue = instance->tempLog.rbegin();
-					lastTemp = lastValue->second;
-				}
-
-				if ((lastTemp < (int)avg ) || (lastTemp > (int)(avg+0.9)) || (instance->tempLog.empty()))		
-				{
-					time_t current_raw_time = time(0);
-					instance->tempLog.insert(std::make_pair(current_raw_time, (int)(avg)));  
-
-					ESP_LOGI(TAG, "Logging: %d° at date: %lld", (int)(avg) , current_raw_time);
+					instance->forceTempLog = true;
 				}
 				else
 				{
-					ESP_LOGI(TAG, "Skip same");
+					ESP_LOGI(TAG, "Skip same - temperature unchanged and timeout not reached");
 				}
 			}
+/*			if (current_raw_time - lastValue->first < 5)  // Prevent too frequent logging Mainly trgiggered by step start
+			{
+				instance->forceTempLog = false;  //override
+			} */
+		}
+
+		if (instance->forceTempLog)		
+		{
+			instance->forceTempLog = false;
+			instance->tempLog.insert(std::make_pair(current_raw_time, (int)(avg)));  
+			ESP_LOGI(TAG, "Logging: %d° at date: %lld", (int)(avg) , current_raw_time);
+		
 
 			if (instance->mqttEnabled)
 			{
@@ -1736,7 +1761,7 @@ void BrewEngine::readLoop(void *arg)
 
 				esp_mqtt_client_publish(instance->mqttClient, instance->mqttTopic.c_str(), payload.c_str(), 0, 1, 1);
 			}
-		}
+		} 
 
 		if (needed && !working)
 		{
@@ -2059,6 +2084,7 @@ void BrewEngine::controlLoop(void *arg)
 			instance->inIwindow = false; //Disable I tag in PID controller
 			resetPIDNextStep = true;	// We reset PID anyway
 			instance->plannedRemainingSeconds = 0; 
+			instance->forceTempLog = true; 	// Record current temperature, synced break point in the graph
 			
 			if (instance->executionSteps.size() < (instance->currentMashStep + 2))
 			// There are no more steps
