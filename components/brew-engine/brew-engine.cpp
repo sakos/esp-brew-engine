@@ -2913,6 +2913,10 @@ httpd_handle_t BrewEngine::startWebserver(void)
 	config.stack_size = 20480;
 	config.uri_match_fn = httpd_uri_match_wildcard;
 
+	config.lru_purge_enable = true;     // Kick off oldest session of no room for new
+	config.recv_wait_timeout = 2;       // wait 2 seconds instead of 5. Faster detection of connection loss
+	config.send_wait_timeout = 2;       // wait 2 seconds instead of 5. Faster connection drop if the send buffer full.
+
 	// Start the httpd server
 	ESP_LOGI(TAG, "Starting server on port: '%d'", config.server_port);
 	if (httpd_start(&server, &config) == ESP_OK)
