@@ -1828,19 +1828,7 @@ void BrewEngine::pidLoop(void *arg)
 		ESP_LOGD(TAG, "Pid Output: %d Target: %f", instance->pidOutput, instance->targetTemperature);
 
 		// Manual override and boost
-		if (instance->boostStatus == Boost)
-		{
-			outputPercent = 100;
-			instance->outputOverrides = 100;
-			instance->overrideText = "Boost: ";
-		}
-		else if (instance->heaterLimit < outputPercent)
-		{
-			outputPercent = instance->heaterLimit;
-			instance->outputOverrides = instance->heaterLimit;
-			instance->overrideText = "Limit: ";
-		}
-		else if (instance->coolingStep)
+		if (instance->coolingStep)
 		{
 			outputPercent = 0;
 			instance->outputOverrides = 0;
@@ -1851,6 +1839,22 @@ void BrewEngine::pidLoop(void *arg)
 			outputPercent = 0;
 			instance->outputOverrides = 0;
 			instance->overrideText = "Rest: ";
+		}
+		else if (instance->heaterLimit < outputPercent)
+		{
+			if (instance->boostStatus == Boost)
+			{
+				// Fixed boost is not needed. PID with proper settings will enforce high percentage.
+				//outputPercent = 100;
+				instance->outputOverrides = outputPercent;
+				instance->overrideText = "Boost: ";
+			}
+			else
+			{
+				outputPercent = instance->heaterLimit;
+				instance->outputOverrides = instance->heaterLimit;
+				instance->overrideText = "Limit: ";
+			}
 		}
 		if (instance->manualOverrideOutput.has_value())
 		{
@@ -2048,7 +2052,6 @@ void BrewEngine::controlLoop(void *arg)
 	instance->coolingStep = false;	
 
 	
-	uint boostUntil;	// The Boost limit temperature
 	uint tempRate;		// The percentage of target temperature within a temp increasing step. 
 	
 	instance->defaultTargetTemperature = instance->temperature; 		// Stores the original step temperature in case of temp override
@@ -2134,6 +2137,7 @@ void BrewEngine::controlLoop(void *arg)
 					instance->resetManualTemp = true; // Clear manual temp in GUI
 					instance->defaultTargetTemperature = currentStep->temperature; 	// Reference temperature according the echedule is stored
 					instance->coolingStep = ((prevStep->temperature > currentStep->temperature) && instance->boilRun);  //Indicate if the step is cooling hence heating is disabled. Only in boil: hopstand
+					instance->inIwindow = false; //Disable I tag by default at start of a ramp step
 					nextAdaptationTime = now + seconds(max(ADAPTIVEDELAY, static_cast<uint16_t>(duration_cast<seconds>(currentStep->time - now).count() * 0.15)));    //First time adaptation at 15% of the time or 50 seconds
 					nextStep = instance->executionSteps.at(instance->currentMashStep + 1);  // No check is needed. A hold step must be present after a ramp step.
 				}
@@ -2287,33 +2291,16 @@ void BrewEngine::controlLoop(void *arg)
 				}						
 			}	//End of during a step IF
 			// Common part for all cases
-			// PID reset if needed due to new ramp step or boost just started/ended
-			instance->inIwindow = (instance->temperature >= (currentStep->temperature - instance->boostModeUntil)); 
-			// no need to check if boostModeUntil is zero. If target temp reached, "I" tag can be activated anyway.
+			
+			// no need to check if boostModeUntil is zero. If target temp reached, "I" tag will be activated anyway.
+			// Only enable if within the range once
+			instance->inIwindow = (instance->inIwindow || instance->temperature >= (currentStep->temperature - instance->boostModeUntil)); 
 
 			// Handle boost mode		
-			if (currentStep->allowBoost && !currentStep->hold)
-			{
-				boostUntil = (uint)(currentStep->temperature - instance->boostModeUntil);
+			// We only indicate that heater limit is not applied.
+			if (currentStep->allowBoost) instance->boostStatus = Boost; // Was set to false for hold steps at schedule load
 
-				if (instance->boostStatus == Off && instance->inIwindow ) 
-				{
-					ESP_LOGI(TAG, "Boost Start Until: %d", boostUntil);
-					instance->logRemote("Boost Start");
-					instance->boostStatus = Boost;
-					resetPIDNextStep = true;
-				}
-				else if (instance->boostStatus == Boost && !instance->inIwindow)
-				{
-					// Go immediatelly to boost off
-					ESP_LOGI(TAG, "Boost End");
-					instance->logRemote("Boost End");
-					instance->boostStatus = Off;
-					resetPIDNextStep = true;
-				}
-			}
-
-			
+			// PID reset if needed due to new ramp step
 			if (resetPIDNextStep)
 			{
 					// Reset pid
