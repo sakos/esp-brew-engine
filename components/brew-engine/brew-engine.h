@@ -156,7 +156,7 @@ private:
 	static constexpr uint16_t ADAPTIVEDELAY = 45; 						// Time in sec to converge remaining time estimation before adaptive correction is applied
 	static constexpr uint16_t ADAPTIVECYCLE = 10; 						// Time in sec to converge remaining time estimation before adaptive correction is applied
 
-    double boostModeUntil = 5;
+    double boostModeUntil = 5;			// Reused for I tag ignore until delta temp. TODO: rename variable in all places
 	uint8_t heaterLimit = 100;
 	uint8_t relayGuard = 3;
 	
@@ -191,7 +191,7 @@ private:
     uint8_t pidOrigOutput = 0;	// PID calculation result
     std::optional<uint8_t> outputOverrides = std::nullopt;	// Output override by system
     string overrideText = "";	//Output override reason text
-	
+	string pidDiagText = "";	// Detailed P, I D values to help tuning PID settings
 
 	
 	

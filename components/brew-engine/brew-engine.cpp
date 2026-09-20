@@ -95,6 +95,8 @@ void BrewEngine::Init()
 	this->powerUsage = 0;
 	
 	this->currentStepName = "";
+	
+	this->pidDiagText = " ";		//Keep one space. Empty string would increase the label size.
 
 
 	xTaskCreate(&this->readLoop, "readloop_task", 4096, this, 5, NULL);
@@ -1821,6 +1823,7 @@ void BrewEngine::pidLoop(void *arg)
 			instance->inIwindow, 
 			dt
 		);
+		instance->pidDiagText = pid.getLastDiagString();
 		instance->pidOrigOutput = outputPercent; // We keep the original PID value in this variable and pidOutput shows the actual output
 		ESP_LOGD(TAG, "Pid Output: %d Target: %f", instance->pidOutput, instance->targetTemperature);
 
@@ -1984,6 +1987,7 @@ void BrewEngine::pidLoop(void *arg)
 	instance->pidOutput = 0;
 	instance->outputOverrides = std::nullopt;
 	instance->pidOrigOutput = 0;
+	instance->pidDiagText = " ";		//Keep one space. Empty string would increase the label size.
 
 	vTaskDelete(NULL);
 }
@@ -2527,10 +2531,10 @@ string BrewEngine::processCommand(const string &payLoad)
 			jCurrentTemps.push_back(jCurrentTemp);
 		}
 		
-		std::string outputStatusText = "PID: " + std::to_string(this->pidOrigOutput) + "%";
+		std::string outputStatusText = "PID: " + std::to_string(this->pidOrigOutput);
 
 		if (this->outputOverrides.has_value()) {
-			outputStatusText += " -> " + this->overrideText + std::to_string(this->outputOverrides.value()) + "%";
+			outputStatusText += " -> " + this->overrideText + std::to_string(this->outputOverrides.value());
 		}
 		
 		resultData = {
@@ -2556,15 +2560,12 @@ string BrewEngine::processCommand(const string &payLoad)
 			{"resetManualOutput", this->resetManualOutput},			
 			{"resetManualTemp", this->resetManualTemp},			
 			{"currentScheduleName", this->selectedMashScheduleName},
-			{"remainingTime", this->requestedRemainingTime.value_or(this->plannedRemainingSeconds)},			
+			{"remainingTime", this->requestedRemainingTime.value_or(this->plannedRemainingSeconds)},	
+			{"pidDiagText", this->pidDiagText}, 
+		
 		};
 		
-		
-		if (this->outputOverrides.has_value())
-		{
-			resultData["outputOverrides"] = this->outputOverrides.value();
-		}
-		
+				
 		resetManualOutput = false;
 		resetManualTemp = false;
 
