@@ -25,9 +25,9 @@ private:
     // --- FIX SCALING FACTORS FOR HUMAN-READABLE TUNING ---
     // This allows the user to input normal numbers (e.g., I=0.5, D=25) 
     // instead of micro-fractions or massive hundreds.
-    const double I_SCALE = 1.0 / 1000.0; // User input '1.0' becomes 0.001 internally
-    const double D_SCALE = 10.0;         // User input '1.0' becomes 10.0 internally
-    const double D_DYNSCALE = 2.0;         // Derivative D factor
+    const double I_SCALE = 1.0 / 200.0; // User input '1.0' becomes 0.005 internally
+    const double D_SCALE = 20.0;         // User input '1.0' becomes 20.0 internally
+    const double D_DYNSCALE = 1.5;         // Derivative D factor
 
     // --- DIAGNOSTICS STORAGE ---
     // Pre-allocated string to store the formatted P, I, D terms without heap fragmentation
