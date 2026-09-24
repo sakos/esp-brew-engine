@@ -1298,6 +1298,7 @@ void BrewEngine::adjustScheduleDynamic(const int deltaSeconds)
 void BrewEngine::stop()
 {
 	this->controlRun = false;
+	this->restRun = false;
 	this->boostStatus = Off;
 	this->inAdaptationTime = false;
 	this->statusText = "Idle";
@@ -2462,7 +2463,7 @@ string BrewEngine::processCommand(const string &payLoad)
 
 	if (command == "Data")
 	{
-		time_t lastLogDateTime = time(0);
+		time_t lastLogDateTime = 0;			// time(0) is now. Need epoch instead to indicate that no logs were sent
 
 		json jTempLog = json::array({});
 		if (!this->tempLog.empty())
@@ -2651,7 +2652,14 @@ string BrewEngine::processCommand(const string &payLoad)
 
 		this->start();
 	}
-	else if (command == "StartStir")
+	else if (command == "ClearTempLog")
+{
+    if (!this->controlRun)
+    {
+        this->tempLog.clear();
+        ESP_LOGI(TAG, "Manual tempLog clear triggered from GUI in Idle mode.");
+    }
+}else if (command == "StartStir")
 	{
 		this->startStir(data);
 	}

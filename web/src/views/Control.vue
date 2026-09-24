@@ -442,23 +442,24 @@ const resetAll = () => {
   executionSteps.value = [];
   rawData.value = [];
   notificationsShown.value = [];
+  lastGoodDataDate.value = null; 
   setStartDateNow();
 };
 
 
-watch(status, (newStatus, oldStatus) => {
-  if (newStatus === "Idle" && oldStatus !== "Idle") {
-    idleEntered.value = true;  // Idle mode entered after schedule finished
-  }
-});
 
-watch(selectedMashSchedule, (newVal, oldVal) => {
-  currentTemps.value = [];		// delete temp history
-  setStartDateNow();			// reset chart start time
-  if (idleEntered.value) {
-    // Has effect only once after schedule was finished
-    resetAll();						// make chart update working again
-    idleEntered.value = false;		// only once
+
+watch(selectedMashSchedule, async (newVal, oldVal) => {
+  // Can happen in Idle status only, just check for safety
+  if (status.value === "Idle") {
+    // Notify ESP to wipe the historic temperature log from its memory
+    const requestData = {
+      command: "ClearTempLog",
+      data: null,
+    };
+    await webConn?.doPostRequest(requestData);
+
+	resetAll();
   }
 });
 
