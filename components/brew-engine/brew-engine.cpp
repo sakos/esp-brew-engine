@@ -1015,8 +1015,8 @@ void BrewEngine::detectOnewireTemperatureSensors()
 	} while (search_result != ESP_ERR_NOT_FOUND);
 
 	ESP_ERROR_CHECK(onewire_del_device_iter(iter));
-	ESP_LOGI(TAG, "Searching done, %d DS18B20 device(s) found", this->sensors.size());
-
+	ESP_LOGI(TAG, "Searching done. Physically found %d out of %d configured DS18B20 device(s).", 
+			 i, this->sensors.size());	
 	this->skipTempLoop = false;
 }
 
@@ -1417,7 +1417,8 @@ void BrewEngine::readLoop(void *arg)
 
 	int lastTemp = 0;
 	bool needed = false;
-	bool working = false;
+
+	int consecutive_failures = 0;  // Failed cycle counter before onewire reinit
 
 
 	// Flag to force an immediate temperature jump after skipping the loop
@@ -1439,7 +1440,6 @@ void BrewEngine::readLoop(void *arg)
 		bool loopAborted = false;
 		instance->busBusy = true; // Mark onewire bus is locked
 		needed = false;		      // Onewire failure can happen only if there is at least one sensor configured	
-		working = false;		
 
 		// Temporary structure to hold validated data for control sensors
 		struct ValidControlSensor {
@@ -1454,74 +1454,73 @@ void BrewEngine::readLoop(void *arg)
 		{
 			if (!sensor->handle)
 			{
-				ESP_LOGW(TAG, "Sensor ID [%lld] not present before onewire init, skip", (unsigned long long)key);
+				if (sensor->connected) ESP_LOGW(TAG, "Sensor ID [%lld] not present before tempread init, exclude", (unsigned long long)key);
+				sensor->connected = false;
+				sensor->lastTemp = 0;
 				continue;
 			}
 
 			needed = true; // This sensor was detected before and should work
-
+			
+			// Check presence of the sensor first
 			ds18b20_device_handle_t handle = sensor->handle;
 			string stringId = std::to_string(key);
-			esp_err_t err = ESP_FAIL;
 
-			// Step 1: Trigger conversion with up to 3 attempts, 15ms delay between retries
-			for (int retry = 0; retry < 3; retry++)
+			float dummy_temp;
+			esp_log_level_set("ds18b20", ESP_LOG_NONE);  // temporary log mute to prevent flooding while sensor is disconnected
+			esp_err_t presence_err = ds18b20_get_temperature(handle, &dummy_temp);
+			esp_log_level_set("ds18b20", ESP_LOG_ERROR);  // logging enabled again
+			
+
+			if (presence_err != ESP_OK)
 			{
-				if (instance->skipTempLoop)
-				{
-					loopAborted = true;
-					break;
-				}
-				err = ds18b20_trigger_temperature_conversion(handle);
-				if (err == ESP_OK)
-				{
-					break;
-				}
-				if (retry < 2)
-				{
-					vTaskDelay(pdMS_TO_TICKS(15));
-				}
+				// If the sensor is not present the exclude it.
+				if (sensor->connected) ESP_LOGW(TAG, "Sensor ID [%lld] is not responding, disconnected", (unsigned long long)key);
+				sensor->connected = false;
+				sensor->lastTemp = 0;
+				instance->currentTemperatures.erase(key);
+				continue; // Continue with the next sensor
 			}
 			
-			if (loopAborted) break;
+			// The sensor is present on the bus
+			if (!sensor->connected) ESP_LOGW(TAG, "Sensor [%s] is physically reconnected!", stringId.c_str());
+			sensor->connected = true;
 
-			// If conversion failed after all retries, skip this sensor immediately
+
+
+			// Step 1: Trigger conversion with single attempt
+			esp_err_t err = ds18b20_trigger_temperature_conversion(handle);
 			if (err != ESP_OK)
 			{
-				ESP_LOGW(TAG, "Failed to trigger conversion for [%s] after 3 attempts, skipping!", stringId.c_str());
-				sensor->connected = false;
+				ESP_LOGW(TAG, "Failed to trigger conversion for [%s].", stringId.c_str());
 				sensor->lastTemp = 0;
 				instance->currentTemperatures.erase(key);
 				continue;
 			}
 
-			// CHECK 2: Before entering the blocking internal read delay
-			if (instance->skipTempLoop)
+			if (instance->skipTempLoop) // Fast exit before long read cycle if temp detection is requested
 			{
 				loopAborted = true;
 				break;
 			}
 
+
 			// Step 2: Single measurement read (No retries here to prevent major timing lags)
 			float temperature;
 			err = ds18b20_get_temperature(handle, &temperature);
-			
 			if (err != ESP_OK)
 			{
-				ESP_LOGW(TAG, "Error Reading temp from [%s], skipping sensor!", stringId.c_str());
-				sensor->connected = false;
+				ESP_LOGW(TAG, "Error Reading temp from [%s].", stringId.c_str());
 				sensor->lastTemp = 0;
 				instance->currentTemperatures.erase(key);
 				continue;
 			};
 			
-			sensor->connected = true; 	
-			working = true; 		
 
 			// --- Rule 1 & 2: Raw Celsius based error filtering ---
 			float rawCelsius = temperature; 
 
-			// Discard if temperature is strictly over 102C
+			// Discard if temperature is strictly over 127C (false reading)
 			if (rawCelsius > 127.0f)
 			{
 				ESP_LOGW(TAG, "Sensor [%s] read over 127°C (%.2f°C). Discarding floating data line error read!", stringId.c_str(), rawCelsius);
@@ -1591,6 +1590,8 @@ void BrewEngine::readLoop(void *arg)
 
 		if (nrOfSensors > 0) 
 		{
+			consecutive_failures = 0;  // Indicate that the onewire bus is working
+			
 			if (nrOfSensors == 1)
 			{
 				avg = validControlSensors[0].temp;
@@ -1695,79 +1696,80 @@ void BrewEngine::readLoop(void *arg)
 			ESP_LOGD(TAG, "Avg Temperature: %.2f°", avg);
 
 			instance->temperature = avg;
-		}
 
+			// Temp logging for graph, Only if valid data is available.
 
-
-		// Temp logging for graph
-
-		time_t current_raw_time = time(0); 
-		
-		if (instance->tempLog.empty() )		
-		{	// Temp logging is not ongoing
-			if (instance->controlRun)
-			{
-				instance->forceTempLog = true;		// Trigger temp log collection
-			}
-		}
-		else
-		{  // Temp logging is running
-			auto lastValue = instance->tempLog.rbegin();
-			lastTemp = lastValue->second;
+			time_t current_raw_time = time(0); 
 			
-
-			// Check if 60 or more seconds have passed since the last log entry
-			// Keeps running after execution stopped with lower frequency, and even if the temp is constant
-			if (current_raw_time - lastValue->first >= 60)  // Not too frequent not to rare...
-			{
-				instance->forceTempLog = true;
+			if (instance->tempLog.empty() )		
+			{	// Temp logging is not ongoing
+				if (instance->controlRun)
+				{
+					instance->forceTempLog = true;		// Trigger temp log collection
+				}
 			}
+			else
+			{  // Temp logging is running
+				auto lastValue = instance->tempLog.rbegin();
+				lastTemp = lastValue->second;
+				
 
-			// Check if regular interval loggin is needed during run
-			if (current_raw_time - lastValue->first >= 10)
-			{
-				if (((lastTemp < (int)avg ) || (lastTemp > (int)(avg+0.9))) && instance->controlRun )		
+				// Check if 60 or more seconds have passed since the last log entry
+				// Keeps running after execution stopped with lower frequency, and even if the temp is constant
+				if (current_raw_time - lastValue->first >= 60)  // Not too frequent not to rare...
 				{
 					instance->forceTempLog = true;
+					ESP_LOGI(TAG, "Temperature unchanged but timeout happened. Forced logging");
 				}
-				else
+
+				// Check if regular interval loggin is needed during run
+				if (current_raw_time - lastValue->first >= 10)
 				{
-					ESP_LOGI(TAG, "Skip same - temperature unchanged and longer timeout not reached");
+					if (((lastTemp < (int)avg ) || (lastTemp > (int)(avg+0.9))) && instance->controlRun )		
+					{
+						instance->forceTempLog = true;
+					}
+				}
+				else  // Prevent too frequent logging Mainly trgiggered by step start
+				{
+					instance->forceTempLog = false;  //override. No need to log since there was a recent log
 				}
 			}
-			else  // Prevent too frequent logging Mainly trgiggered by step start
+
+			if (instance->forceTempLog)		
 			{
-				instance->forceTempLog = false;  //override. No need to log since there was a recent log
-			}
+				instance->forceTempLog = false;
+				instance->tempLog.insert(std::make_pair(current_raw_time, (int)(avg)));  
+				ESP_LOGI(TAG, "Logging: %d° at date: %lld", (int)(avg) , current_raw_time);
+			
+
+				if (instance->mqttEnabled)
+				{
+					string iso_datetime = to_iso_8601(std::chrono::system_clock::now());
+					json jPayload;
+					jPayload["time"] = iso_datetime;
+					jPayload["temp"] = instance->temperature;
+					jPayload["target"] = instance->targetTemperature;
+					jPayload["output"] = instance->pidOutput;
+					string payload = jPayload.dump();
+
+					esp_mqtt_client_publish(instance->mqttClient, instance->mqttTopic.c_str(), payload.c_str(), 0, 1, 1);
+				}
+			} 
 		}
-
-		if (instance->forceTempLog)		
+		else if (needed)
 		{
-			instance->forceTempLog = false;
-			instance->tempLog.insert(std::make_pair(current_raw_time, (int)(avg)));  
-			ESP_LOGI(TAG, "Logging: %d° at date: %lld", (int)(avg) , current_raw_time);
-		
+			consecutive_failures++;
+			ESP_LOGW(TAG, "All sensors lost for %d consecutive cycle(s)...", consecutive_failures);
 
-			if (instance->mqttEnabled)
+			if (consecutive_failures >= 5)
 			{
-				string iso_datetime = to_iso_8601(std::chrono::system_clock::now());
-				json jPayload;
-				jPayload["time"] = iso_datetime;
-				jPayload["temp"] = instance->temperature;
-				jPayload["target"] = instance->targetTemperature;
-				jPayload["output"] = instance->pidOutput;
-				string payload = jPayload.dump();
-
-				esp_mqtt_client_publish(instance->mqttClient, instance->mqttTopic.c_str(), payload.c_str(), 0, 1, 1);
+				ESP_LOGE(TAG, "5 consecutive failures reached. Hard reinit onewire bus now!");
+				instance->detectOnewireTemperatureSensors();
+				vTaskDelay(pdMS_TO_TICKS(1000));
+				instance->lastCalculatedAvg = 0.0; 
+				consecutive_failures = 0; 
 			}
-		} 
-
-		if (needed && !working)
-		{
-			ESP_LOGI(TAG, "All detected sensors are lost, reinit onewire");
-			instance->detectOnewireTemperatureSensors();
-			vTaskDelay(pdMS_TO_TICKS(1000));
-			instance->lastCalculatedAvg = 0.0; 
 		}
 	}
 	vTaskDelete(NULL);
